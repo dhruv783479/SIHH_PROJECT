@@ -200,15 +200,16 @@ class SurfaceTypeClassifier:
         scores[1] = (0.45 * concrete_lum_evidence + 0.35 * neutral_tint_evidence + 0.20 * low_sat_evidence) * (1.0 - 0.7 * rural_foliage_evidence)
 
         # 3. Interlocking Concrete Paver Blocks Evidence
-        # Characteristics: high repetitive frequency, moderate luminance, urban/industrial context (low rural foliage)
-        paver_edge_evidence = max(0.0, min(1.0, (high_freq_ratio - 0.20) / 0.25))
-        scores[3] = (paver_edge_evidence * 0.75) * (1.0 - 0.8 * rural_foliage_evidence)
+        # Paver blocks require structured orthogonal joint grids, not random debris, rough aggregate, or puddle ripples
+        paver_edge_evidence = max(0.0, min(1.0, (high_freq_ratio - 0.45) / 0.35))
+        scores[3] = (paver_edge_evidence * 0.25) * (1.0 - 0.8 * rural_foliage_evidence)
 
         # 4. Flexible Bituminous Asphalt Evidence
         # Default engineered highway surface: dark to medium gray, neutral tint, moderate saturation, asphalt binder
-        asphalt_lum_evidence = max(0.0, min(1.0, (140.0 - mean_lum) / 45.0))
-        asphalt_neutral = max(0.0, min(1.0, 1.0 - abs(rb_ratio - 1.01) / 0.10))
-        scores[0] = (0.55 * asphalt_lum_evidence + 0.45 * asphalt_neutral) * (1.0 - 0.6 * rural_foliage_evidence)
+        asphalt_neutral = max(0.0, min(1.0, 1.0 - abs(rb_ratio - 1.0) / 0.16))
+        asphalt_sat = max(0.0, min(1.0, (0.30 - mean_sat) / 0.20))
+        asphalt_lum = max(0.0, min(1.0, (190.0 - mean_lum) / 80.0))
+        scores[0] = (0.35 + 0.35 * asphalt_neutral + 0.30 * asphalt_sat * asphalt_lum) * (1.0 - 0.6 * rural_foliage_evidence)
 
         total = sum(scores.values()) + 1e-8
         probs = {k: round(v / total, 4) for k, v in scores.items()}
@@ -234,11 +235,14 @@ class SurfaceTypeClassifier:
         best_cls_id = int(max(probs, key=probs.get))
         best_conf = float(probs[best_cls_id])
 
-        # Hysteresis threshold: only declare unpaved or concrete if confidence exceeds baseline floor
-        if best_cls_id == 2 and (best_conf < 0.42 or rural_foliage_evidence < 0.25):
+        # Strict hysteresis: asphalt is the primary engineered carriageway prior
+        if best_cls_id == 3 and (best_conf < 0.65 or high_freq_ratio < 0.50):
             best_cls_id = 0
             best_conf = probs[0]
-        elif best_cls_id in (1, 3) and best_conf < 0.45:
+        elif best_cls_id == 2 and (best_conf < 0.42 or rural_foliage_evidence < 0.25):
+            best_cls_id = 0
+            best_conf = probs[0]
+        elif best_cls_id == 1 and (best_conf < 0.50 or concrete_lum_evidence < 0.25):
             best_cls_id = 0
             best_conf = probs[0]
 

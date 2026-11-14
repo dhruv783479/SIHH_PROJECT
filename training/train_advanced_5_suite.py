@@ -137,12 +137,13 @@ def _extract_surface_8_features(img_rgb: np.ndarray, roi_top_fraction: float = 0
     low_sat = max(0.0, min(1.0, (0.11 - mean_sat) / 0.06))
     s_concrete = (0.45 * concrete_lum + 0.35 * neutral_tint + 0.20 * low_sat) * (1.0 - 0.7 * rural_foliage_evidence)
 
-    paver_edge = max(0.0, min(1.0, (high_freq_ratio - 0.20) / 0.25))
-    s_paver = (paver_edge * 0.78) * (1.0 - 0.8 * rural_foliage_evidence)
+    paver_edge = max(0.0, min(1.0, (high_freq_ratio - 0.45) / 0.35))
+    s_paver = (paver_edge * 0.25) * (1.0 - 0.8 * rural_foliage_evidence)
 
-    asphalt_lum = max(0.0, min(1.0, (142.0 - mean_lum) / 45.0))
-    asphalt_neutral = max(0.0, min(1.0, 1.0 - abs(rb_ratio - 1.01) / 0.10))
-    s_asphalt = (0.55 * asphalt_lum + 0.45 * asphalt_neutral) * (1.0 - 0.6 * rural_foliage_evidence)
+    asphalt_neutral = max(0.0, min(1.0, 1.0 - abs(rb_ratio - 1.0) / 0.16))
+    asphalt_sat = max(0.0, min(1.0, (0.30 - mean_sat) / 0.20))
+    asphalt_lum = max(0.0, min(1.0, (190.0 - mean_lum) / 80.0))
+    s_asphalt = (0.35 + 0.35 * asphalt_neutral + 0.30 * asphalt_sat * asphalt_lum) * (1.0 - 0.6 * rural_foliage_evidence)
 
     scores = {0: s_asphalt, 1: s_concrete, 2: s_unpaved, 3: s_paver}
     best_cls = int(max(scores, key=scores.get))
