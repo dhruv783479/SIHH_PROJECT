@@ -1082,12 +1082,25 @@ class DeepInferencePipeline:
 
             if seg_cls == 2:
                 # Morphological closure bridges broken crater rims and fills internal water reflections
-                close_k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (17, 17))
+                close_k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (19, 19))
                 binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, close_k)
+                # Flood-fill interior water basins enclosed by cavity rim
+                padded = _np.pad(binary, 1, mode="constant", constant_values=0)
+                ff_fill = _np.zeros((padded.shape[0] + 2, padded.shape[1] + 2), dtype=_np.uint8)
+                cv2.floodFill(padded, ff_fill, (0, 0), 255)
+                interior_holes = (padded[1:-1, 1:-1] == 0).astype(_np.uint8)
+                if 0 < int(interior_holes.sum()) <= int(0.25 * frame_px):
+                    binary = binary | interior_holes
                 cnts, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 for c_cnt in cnts:
                     if cv2.contourArea(c_cnt) >= 30:
                         cv2.drawContours(binary, [c_cnt], -1, 1, -1)
+                        # Convex hull infill for horseshoe/crescent rims enclosing water reflections
+                        hull = cv2.convexHull(c_cnt)
+                        ha = cv2.contourArea(hull)
+                        ca = cv2.contourArea(c_cnt)
+                        if ha <= 0.25 * frame_px and ha >= 1.25 * ca:
+                            cv2.drawContours(binary, [hull], -1, 1, -1)
             else:
                 binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE,
                                           cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
@@ -1178,6 +1191,7 @@ class DeepInferencePipeline:
                     xi1, yi1 = min(a[0] + a[2], b[0] + b[2]), min(a[1] + a[3], b[1] + b[3])
                     inter_w = max(0, xi1 - xi0)
                     inter_h = max(0, yi1 - yi0)
+                    is_merge = False
                     if inter_w > 0 and inter_h > 0:
                         inter = inter_w * inter_h
                         a1 = a[2] * a[3]
@@ -1185,18 +1199,38 @@ class DeepInferencePipeline:
                         iou = inter / float(a1 + a2 - inter)
                         containment = inter / float(min(a1, a2))
                         if iou >= 0.40 or containment >= 0.70:
-                            x0, y0 = min(a[0], b[0]), min(a[1], b[1])
-                            x1, y1 = max(a[0] + a[2], b[0] + b[2]), max(a[1] + a[3], b[1] + b[3])
-                            if ((x1 - x0) * (y1 - y0)) > int(0.55 * W * H):
-                                continue
-                            wa, wb = a[8] or 0.0, b[8] or 0.0
-                            mp = round((a[7] * wa + b[7] * wb) / (wa + wb), 4) if (wa + wb) > 0 else a[7]
-                            pot[i] = [x0, y0, x1 - x0, y1 - y0, a[4] + b[4], 2, "segmentation", mp,
-                                      round(wa + wb, 5),
-                                      ((x1 - x0) * (y1 - y0)) / float(W * H) > self.MAX_COMPONENT_BOX_FRACTION]
-                            del pot[j]
-                            merged = True
-                            break
+                            is_merge = True
+
+                    # Bridge opposite rim lobes of the same crater across an internal water puddle
+                    comb_w = max(a[0] + a[2], b[0] + b[2]) - min(a[0], b[0])
+                    comb_h = max(a[1] + a[3], b[1] + b[3]) - min(a[1], b[1])
+                    if not is_merge and (comb_w * comb_h) <= int(0.40 * W * H):
+                        y_ov = max(0, min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1]))
+                        min_h = min(a[3], b[3])
+                        gap_x = max(0, max(a[0], b[0]) - min(a[0] + a[2], b[0] + b[2]))
+
+                        x_ov = max(0, min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0]))
+                        min_w = min(a[2], b[2])
+                        gap_y = max(0, max(a[1], b[1]) - min(a[1] + a[3], b[1] + b[3]))
+
+                        is_h_lobes = (min_h > 0 and (y_ov / float(min_h)) >= 0.60 and gap_x <= int(W * 0.16))
+                        is_v_lobes = (min_w > 0 and (x_ov / float(min_w)) >= 0.60 and gap_y <= int(H * 0.12))
+                        if is_h_lobes or is_v_lobes:
+                            is_merge = True
+
+                    if is_merge:
+                        x0, y0 = min(a[0], b[0]), min(a[1], b[1])
+                        x1, y1 = max(a[0] + a[2], b[0] + b[2]), max(a[1] + a[3], b[1] + b[3])
+                        if ((x1 - x0) * (y1 - y0)) > int(0.55 * W * H):
+                            continue
+                        wa, wb = a[8] or 0.0, b[8] or 0.0
+                        mp = round((a[7] * wa + b[7] * wb) / (wa + wb), 4) if (wa + wb) > 0 else a[7]
+                        pot[i] = [x0, y0, x1 - x0, y1 - y0, a[4] + b[4], 2, "segmentation", mp,
+                                  round(wa + wb, 5),
+                                  ((x1 - x0) * (y1 - y0)) / float(W * H) > self.MAX_COMPONENT_BOX_FRACTION]
+                        del pot[j]
+                        merged = True
+                        break
                 if merged:
                     break
         return rest + pot
@@ -1601,11 +1635,21 @@ class DeepInferencePipeline:
         conf = float(pred.get("confidence", 0.0))
         if cls_id not in (3, 4, 5, 6) or conf < self.MIN_REPORT_CONFIDENCE:
             return None
+        # Damaged traffic sign requires high hurdle confidence (>= 0.65) to avoid false triggers on asphalt pavement
+        if cls_id == 6 and conf < 0.65:
+            return None
 
-        bx = int(W * 0.10)
-        by = int(H * self.ROAD_ROI_TOP_FRACTION)
-        bw = int(W * 0.80)
-        bh = int(H * (0.95 - self.ROAD_ROI_TOP_FRACTION))
+        if cls_id == 6:
+            # Localize signpost in upper roadside quadrant rather than draping across carriageway
+            bx = int(W * 0.60)
+            by = int(H * 0.08)
+            bw = int(W * 0.32)
+            bh = int(H * 0.35)
+        else:
+            bx = int(W * 0.10)
+            by = int(H * self.ROAD_ROI_TOP_FRACTION)
+            bw = int(W * 0.80)
+            bh = int(H * (0.95 - self.ROAD_ROI_TOP_FRACTION))
         bx_norm, by_norm = round(bx / float(W), 4), round(by / float(H), 4)
         bw_norm, bh_norm = round(bw / float(W), 4), round(bh / float(H), 4)
 
