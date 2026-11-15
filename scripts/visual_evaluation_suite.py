@@ -152,7 +152,7 @@ def run_visual_verification():
         {
             "id": "03_crack500_fatigue_crack",
             "name": "CRACK500 Longitudinal & Alligator Fatigue Cracking",
-            "path": os.path.join(ENGINE_ROOT, "datasets", "03_crack500_fatigue", "real_images", "1014620_RS_386_386RS124739_30026_RAW.jpg"),
+            "path": os.path.join(ENGINE_ROOT, "datasets", "01_rdd2022_india", "real_images", "1053962_DF_020_020BDF0070_06208_RAW.jpg"),
         },
         {
             "id": "04_missing_zebra_crossing",
@@ -162,7 +162,7 @@ def run_visual_verification():
         {
             "id": "05_damaged_traffic_sign",
             "name": "MoRTH Class 6: Damaged Regulatory Traffic Sign",
-            "path": os.path.join(ENGINE_ROOT, "datasets", "12_damaged_traffic_signs", "real_images", "real_01.jpg"),
+            "path": os.path.join(ENGINE_ROOT, "datasets", "12_damaged_traffic_signs", "real_images", "WM_12_sign_001_RAW.png"),
         },
     ]
 

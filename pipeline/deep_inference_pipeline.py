@@ -1692,11 +1692,17 @@ class DeepInferencePipeline:
             by = int(H * 0.08)
             bw = int(W * 0.32)
             bh = int(H * 0.35)
+        elif cls_id in (4, 5):
+            # Carriageway pavement span for missing zebra crossing / missing road divider
+            bx = int(W * 0.12)
+            by = int(H * 0.52)
+            bw = int(W * 0.76)
+            bh = int(H * 0.38)
         else:
             bx = int(W * 0.10)
-            by = int(H * self.ROAD_ROI_TOP_FRACTION)
+            by = int(H * max(0.45, self.ROAD_ROI_TOP_FRACTION))
             bw = int(W * 0.80)
-            bh = int(H * (0.95 - self.ROAD_ROI_TOP_FRACTION))
+            bh = int(H * (0.92 - max(0.45, self.ROAD_ROI_TOP_FRACTION)))
         bx_norm, by_norm = round(bx / float(W), 4), round(by / float(H), 4)
         bw_norm, bh_norm = round(bw / float(W), 4), round(bh / float(H), 4)
 
