@@ -703,6 +703,23 @@ class DeepInferencePipeline:
             primary_distress["volumetric_m3"] = metric_3d_res["volume_m3"]
             primary_distress["automotive_chassis_hazard"] = metric_3d_res["automotive_hazard"]
             primary_distress["astm_d6433_severity"] = metric_3d_res["astm_d6433_severity"]
+        else:
+            metric_3d_res = {
+                "depth_cm": 0.0,
+                "max_metric_depth_cm": 0.0,
+                "depth_low_cm": 0.0,
+                "depth_high_cm": 0.0,
+                "surface_area_m2": 0.0,
+                "volume_m3": 0.0,
+                "distance_meters": 0.0,
+                "point_cloud_3d": None,
+                "astm_d6433_severity": "NONE",
+                "automotive_hazard": None,
+                "morth_tonnage_t": 0.0,
+                "repair_cost_inr": 0.0,
+                "trained_checkpoint_loaded": bool(getattr(self.metric_3d_engine, "_trained_regressor", None) is not None),
+                "measurement_basis": "No localized pavement cavity detected in current frame",
+            }
 
         if surface_analysis.get("code") == "unpaved_rural_earthen_dirt":
             for d in detections:
@@ -964,7 +981,7 @@ class DeepInferencePipeline:
         return window & (mask == seg_cls)
 
     MIN_COMPONENT_FRACTION = {"crack": 0.0012, "pothole": 0.004}
-    MIN_COMPONENT_MARGIN = {"crack": 0.0, "pothole": 0.08}
+    MIN_COMPONENT_MARGIN = {"crack": 0.0, "pothole": 0.10}
 
     def _component_floor(self, seg_cls):
         """Floor for one class: its calibrated threshold plus that class's margin."""

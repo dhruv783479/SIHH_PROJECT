@@ -102,6 +102,8 @@ road_shield_trained_checkpoints.zip
 checkpoints/deep_vision_resnet18.pt
 checkpoints/deep_vision_report.json
 checkpoints/defect_segmenter_unet.pt
+checkpoints/vision_distress_net.pt
+reports/training_eval/
 logs/tunnel.*
 logs/engine_public.*
 

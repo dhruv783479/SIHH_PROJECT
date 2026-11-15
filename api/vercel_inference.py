@@ -1388,8 +1388,20 @@ def audit_image_base64(
 
     for prop in proposals:
         bx, by, bw, bh = prop["bbox_pixels"]
-        if bw < 14 or bh < 10:
+        # ASTM D6433 & MoRTH minimum physical pothole dimensions:
+        # A real road cavity must be at least 18px high, 22px wide, and have an aspect ratio <= 2.8
+        if bh < 18 or bw < 22:
             continue
+        if (bw / float(max(1, bh))) > 2.8:
+            continue
+        if (bw * bh) < int(0.003 * W * H):
+            continue
+
+        # Suppress proposals that heavily overlap vehicle or pedestrian bodies/shadows
+        if object_mask is not None:
+            obj_sub = object_mask[by:by + bh, bx:bx + bw]
+            if obj_sub.size > 0 and (obj_sub.sum() / float(obj_sub.size)) > 0.20:
+                continue
 
         if (bx < 20 or bx + bw > W - 20) and by < int(H * 0.50) and (bw * bh) < int(0.04 * W * H):
             continue
@@ -1398,12 +1410,14 @@ def audit_image_base64(
             continue
         comp = prop["seg_comp"]
 
-        cx, cy = bx + bw // 2, by + bh // 2
-        cw = max(96, int(round(bw * 1.35)))
-        ch = max(96, int(round(bh * 1.35)))
-        x0 = max(0, min(W - cw, cx - cw // 2))
-        y0 = max(0, min(H - ch, cy - ch // 2))
-        crop = img_np[y0:min(H, y0 + ch), x0:min(W, x0 + cw)]
+        # Proportional 15% context crop around the proposed defect
+        pad_x = max(8, int(round(bw * 0.15)))
+        pad_y = max(8, int(round(bh * 0.15)))
+        x0 = max(0, bx - pad_x)
+        y0 = max(0, by - pad_y)
+        x1 = min(W, bx + bw + pad_x)
+        y1 = min(H, by + bh + pad_y)
+        crop = img_np[y0:y1, x0:x1]
         cls_info = classify_crop(crop) if crop.size > 0 else dict(frame_cls_raw)
 
         dan_dag_info = None
@@ -1581,11 +1595,18 @@ def audit_image_base64(
         })
 
     if len(detections) > 1:
-        def _can_merge_defects(b1, b2, W, H):
-            comb_w = max(b1[0] + b1[2], b2[0] + b2[2]) - min(b1[0], b2[0])
-            comb_h = max(b1[1] + b1[3], b2[1] + b2[3]) - min(b1[1], b2[1])
-            if (comb_w * comb_h) > int(0.55 * W * H):
+        def _can_merge_defects(b1, b2, W, H, cid=2):
+            comb_x0 = min(b1[0], b2[0])
+            comb_y0 = min(b1[1], b2[1])
+            comb_w = max(b1[0] + b1[2], b2[0] + b2[2]) - comb_x0
+            comb_h = max(b1[1] + b1[3], b2[1] + b2[3]) - comb_y0
+            comb_y1 = comb_y0 + comb_h
+            if (comb_w * comb_h) > int(0.42 * W * H):
                 return False
+            max_w_allowed = int(W * 0.42) if (comb_y0 < 0.48 * H and comb_y1 < 0.72 * H) else int(W * 0.75)
+            if comb_w > max_w_allowed or comb_h > int(0.65 * H):
+                return False
+
             xi0, yi0 = max(b1[0], b2[0]), max(b1[1], b2[1])
             xi1, yi1 = min(b1[0] + b1[2], b2[0] + b2[2]), min(b1[1] + b1[3], b2[1] + b2[3])
             inter_w = max(0, xi1 - xi0)
@@ -1596,7 +1617,18 @@ def audit_image_base64(
                 a2 = b2[2] * b2[3]
                 iou = inter / float(a1 + a2 - inter)
                 containment = inter / float(min(a1, a2))
-                if iou >= 0.40 or containment >= 0.70:
+                if iou >= 0.15 or containment >= 0.25:
+                    return True
+
+            if cid == 2:
+                gap_x = max(0, xi0 - xi1) if xi0 > xi1 else 0
+                gap_y = max(0, yi0 - yi1) if yi0 > yi1 else 0
+                max_w = int(W * 0.75) if comb_y1 >= int(0.65 * H) else int(W * 0.50)
+                is_rim_contact = (
+                    (gap_y <= 15 and gap_x <= int(W * 0.16) and inter_h >= int(0.20 * min(b1[3], b2[3]))) or
+                    (gap_y <= 8 and inter_w >= int(0.40 * min(b1[2], b2[2])))
+                )
+                if is_rim_contact and comb_w <= max_w and comb_h <= int(H * 0.45):
                     return True
             return False
 
@@ -1618,7 +1650,7 @@ def audit_image_base64(
                     d2 = detections[j]
                     if d1["class_id"] != d2["class_id"]:
                         continue
-                    if _can_merge_defects(mb, d2["bbox_pixels"], W, H):
+                    if _can_merge_defects(mb, d2["bbox_pixels"], W, H, cid=d1["class_id"]):
                         nx = min(mb[0], d2["bbox_pixels"][0])
                         ny = min(mb[1], d2["bbox_pixels"][1])
                         nw = max(mb[0] + mb[2], d2["bbox_pixels"][0] + d2["bbox_pixels"][2]) - nx
@@ -1743,10 +1775,21 @@ def audit_image_base64(
             "irc_standard_specification": IRC_STANDARDS.get(f_cid_v, ""),
             "role": "whole-frame opinion of the classifier; not localised, sets no area, depth or cost",
         }
-        sbx = int(W * 0.10)
-        sby = int(H * 0.35)
-        sbw = int(W * 0.80)
-        sbh = int(H * 0.60)
+        if f_cid_v == 6:
+            sbx = int(W * 0.60)
+            sby = int(H * 0.08)
+            sbw = int(W * 0.32)
+            sbh = int(H * 0.35)
+        elif f_cid_v in (4, 5):
+            sbx = int(W * 0.12)
+            sby = int(H * 0.52)
+            sbw = int(W * 0.76)
+            sbh = int(H * 0.38)
+        else:
+            sbx = int(W * 0.10)
+            sby = int(H * 0.45)
+            sbw = int(W * 0.80)
+            sbh = int(H * 0.47)
         s_area = round(min(2.0, float(ipm.calculate_surface_area_sqm(sbx, sby, sbw // 2, sbh // 2))), 3) if f_cid_v == 3 else 0.0
         detections.append({
             "bbox_pixels": [sbx, sby, sbw, sbh],
@@ -1911,6 +1954,23 @@ def audit_image_base64(
         primary_distress["volumetric_m3"] = metric_3d_res["volume_m3"]
         primary_distress["automotive_chassis_hazard"] = metric_3d_res["automotive_hazard"]
         primary_distress["astm_d6433_severity"] = metric_3d_res["astm_d6433_severity"]
+    else:
+        metric_3d_res = {
+            "depth_cm": 0.0,
+            "max_metric_depth_cm": 0.0,
+            "depth_low_cm": 0.0,
+            "depth_high_cm": 0.0,
+            "surface_area_m2": 0.0,
+            "volume_m3": 0.0,
+            "distance_meters": 0.0,
+            "point_cloud_3d": None,
+            "astm_d6433_severity": "NONE",
+            "automotive_hazard": None,
+            "morth_tonnage_t": 0.0,
+            "repair_cost_inr": 0.0,
+            "trained_checkpoint_loaded": bool(getattr(metric_3d_eng, "_trained_regressor", None) is not None),
+            "measurement_basis": "No localized pavement cavity detected in current frame",
+        }
 
     if surface_analysis.get("code") == "unpaved_rural_earthen_dirt":
         for d in detections:
