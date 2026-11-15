@@ -596,9 +596,9 @@ class DeepInferencePipeline:
 
         f_cid = (frame_cls or {}).get("class_id")
         f_cnf = float((frame_cls or {}).get("confidence", 0.0))
-        if f_cid in (3, 4, 5, 6) and f_cnf >= 0.58:
-            if f_cid != 4 or not getattr(self, "_markings", {}).get("found"):
-                filtered_distress = [d for d in filtered_distress if d.get("class_id") == f_cid or float(d.get("confidence", 0.0)) >= 0.82]
+        if f_cid in (3, 4, 5, 6) and f_cnf >= 0.65:
+            # Whole-frame scene hazards (signage/markings) must never suppress verified pavement distress (potholes/cracks)
+            filtered_distress = [d for d in filtered_distress if d.get("class_id") in (1, 2) or d.get("class_id") == f_cid or float(d.get("confidence", 0.0)) >= 0.70]
 
         detections = other_dets + filtered_distress
 
@@ -1081,25 +1081,13 @@ class DeepInferencePipeline:
                 continue
 
             if seg_cls == 2:
-                # Morphological closure bridges broken crater rims and fills internal water reflections
-                close_k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (19, 19))
+                close_k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
                 binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, close_k)
-                # Flood-fill interior water basins enclosed by cavity rim
-                padded = _np.pad(binary, 1, mode="constant", constant_values=0)
-                ff_fill = _np.zeros((padded.shape[0] + 2, padded.shape[1] + 2), dtype=_np.uint8)
-                cv2.floodFill(padded, ff_fill, (0, 0), 255)
-                interior_holes = (padded[1:-1, 1:-1] == 0).astype(_np.uint8)
-                if 0 < int(interior_holes.sum()) <= int(0.25 * frame_px):
-                    binary = binary | interior_holes
                 cnts, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 for c_cnt in cnts:
-                    if cv2.contourArea(c_cnt) >= 30:
-                        cv2.drawContours(binary, [c_cnt], -1, 1, -1)
-                        # Convex hull infill for horseshoe/crescent rims enclosing water reflections
+                    if cv2.contourArea(c_cnt) >= 25:
                         hull = cv2.convexHull(c_cnt)
-                        ha = cv2.contourArea(hull)
-                        ca = cv2.contourArea(c_cnt)
-                        if ha <= 0.25 * frame_px and ha >= 1.25 * ca:
+                        if cv2.contourArea(hull) <= 0.25 * frame_px:
                             cv2.drawContours(binary, [hull], -1, 1, -1)
             else:
                 binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE,
@@ -1198,24 +1186,7 @@ class DeepInferencePipeline:
                         a2 = b[2] * b[3]
                         iou = inter / float(a1 + a2 - inter)
                         containment = inter / float(min(a1, a2))
-                        if iou >= 0.40 or containment >= 0.70:
-                            is_merge = True
-
-                    # Bridge opposite rim lobes of the same crater across an internal water puddle
-                    comb_w = max(a[0] + a[2], b[0] + b[2]) - min(a[0], b[0])
-                    comb_h = max(a[1] + a[3], b[1] + b[3]) - min(a[1], b[1])
-                    if not is_merge and (comb_w * comb_h) <= int(0.40 * W * H):
-                        y_ov = max(0, min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1]))
-                        min_h = min(a[3], b[3])
-                        gap_x = max(0, max(a[0], b[0]) - min(a[0] + a[2], b[0] + b[2]))
-
-                        x_ov = max(0, min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0]))
-                        min_w = min(a[2], b[2])
-                        gap_y = max(0, max(a[1], b[1]) - min(a[1] + a[3], b[1] + b[3]))
-
-                        is_h_lobes = (min_h > 0 and (y_ov / float(min_h)) >= 0.60 and gap_x <= int(W * 0.16))
-                        is_v_lobes = (min_w > 0 and (x_ov / float(min_w)) >= 0.60 and gap_y <= int(H * 0.12))
-                        if is_h_lobes or is_v_lobes:
+                        if iou >= 0.35 or containment >= 0.60:
                             is_merge = True
 
                     if is_merge:
@@ -1359,6 +1330,13 @@ class DeepInferencePipeline:
         from_segmenter = len(bbox) > 6 and bbox[6] == "segmentation"
         try:
             pred = self.vision_model.predict_image(crop)
+            if from_segmenter and pred.get("class_id") == 0:
+                tight_crop = img_np[by:by + bh, bx:bx + bw]
+                if tight_crop.size > 0:
+                    tight_pred = self.vision_model.predict_image(tight_crop)
+                    if tight_pred.get("class_id") in (1, 2) and float(tight_pred.get("confidence", 0.0)) >= 0.50:
+                        pred = tight_pred
+                        crop = tight_crop
             if (not from_segmenter
                     and not getattr(self, "_has_confirmed_seg_distress", False)
                     and pred["class_id"] in (0, 3)
@@ -1388,13 +1366,14 @@ class DeepInferencePipeline:
 
         # Suppress painted road markings (yellow center lines, white lane stripes)
         paint = getattr(self, "_paint_mask", None)
-        if paint is not None:
+        if paint is not None and not from_segmenter:
             sub_paint = paint[max(0, by):min(H, by + bh), max(0, bx):min(W, bx + bw)]
             if sub_paint.size and (float(sub_paint.sum()) / float(sub_paint.size)) > 0.08:
                 return None  # Road traffic marking / painted lane line - NOT a defect!
 
-        # Check crop directly for painted yellow center divider lines on asphalt
-        if crop.ndim == 3 and crop.shape[2] == 3 and crop.size > 0:
+        # Check crop directly for painted yellow center divider lines on asphalt (long narrow stripe)
+        aspect = bh / float(max(1, bw))
+        if (aspect > 2.2 or aspect < 0.35) and not from_segmenter and crop.ndim == 3 and crop.shape[2] == 3 and crop.size > 0:
             import cv2 as _cv2
             c_hsv = _cv2.cvtColor(crop, _cv2.COLOR_RGB2HSV)
             c_gray = _cv2.cvtColor(crop, _cv2.COLOR_RGB2GRAY)
@@ -1403,7 +1382,7 @@ class DeepInferencePipeline:
             c_local = _cv2.blur(c_gray, (kw, kh))
             c_diff = c_gray.astype(float) - c_local.astype(float)
             c_yel = (c_hsv[:, :, 0] >= 14) & (c_hsv[:, :, 0] <= 34) & (c_hsv[:, :, 1] >= 70) & (c_hsv[:, :, 2] >= 90) & (c_diff >= 12.0)
-            if float(c_yel.mean()) > 0.05:
+            if float(c_yel.mean()) > 0.12:
                 return None  # Painted yellow center lines - NOT a pothole!
 
         if from_segmenter and cls_id not in (1, 2):
@@ -1468,6 +1447,8 @@ class DeepInferencePipeline:
                     }
 
                     # Multi-Model Probability Fusion:
+                    orig_mb_cls = cls_id
+                    orig_mb_conf = float(pred.get("confidence", 0.0))
                     if "probabilities" in dan_res and dan_res.get("class_id", 0) != 0:
                         dan_p = np.asarray(dan_res["probabilities"], dtype=np.float32)
                         names = VisionDistressNet.CLASS_NAMES
@@ -1488,6 +1469,14 @@ class DeepInferencePipeline:
                         if f_cls_obj.get("class_id") == cls_id and float(f_cls_obj.get("confidence", 0.0)) >= 0.70:
                             fused_cls = cls_id
                             fused_conf = max(float(pred.get("confidence", 0.0)), float(fused_p[cls_id]))
+                        elif from_segmenter and len(bbox) > 5 and int(bbox[5]) in (1, 2):
+                            seg_kind = int(bbox[5])
+                            if orig_mb_cls == seg_kind and float(orig_mb_conf) >= 0.50:
+                                fused_cls = seg_kind
+                                fused_conf = max(orig_mb_conf, float(fused_p[seg_kind]))
+                            elif fused_cls not in (1, 2) and float(orig_mb_conf) >= 0.50:
+                                fused_cls = orig_mb_cls
+                                fused_conf = orig_mb_conf
 
                         cls_id = fused_cls
                         pred["class_id"] = fused_cls

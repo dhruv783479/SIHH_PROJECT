@@ -68,7 +68,7 @@ def extract_pixel_features(image_rgb, work_size=(WORK_W, WORK_H)):
     return stack.reshape(-1, stack.shape[-1]).astype(np.float32), (h, w)
 
 
-def mask_from_proba(proba, work_shape, orig_shape, thresholds, min_blob_px=12):
+def mask_from_proba(proba, work_shape, orig_shape, thresholds, min_blob_px=12, image_rgb=None):
     """
     (H*W, 3) class probabilities at working resolution -> the segment() dict.
 
@@ -79,6 +79,7 @@ def mask_from_proba(proba, work_shape, orig_shape, thresholds, min_blob_px=12):
     import cv2
     h, w = work_shape
     orig_h, orig_w = orig_shape
+    frame_px = float(h * w)
 
     crack_p, pothole_p = proba[:, CLASS_CRACK], proba[:, CLASS_POTHOLE]
     flat = np.full(proba.shape[0], CLASS_SOUND, dtype=np.uint8)
@@ -98,19 +99,37 @@ def mask_from_proba(proba, work_shape, orig_shape, thresholds, min_blob_px=12):
         if binary.sum() == 0:
             continue
         if cls == CLASS_POTHOLE:
-            # Multi-scale 15x15 cavity basin closing: bridges broken rims across specular water reflections
-            kernel_cavity = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
-            closed_cavity = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel_cavity)
-            padded = np.pad(closed_cavity, 1, mode="constant", constant_values=0)
-            ff_fill = np.zeros((padded.shape[0] + 2, padded.shape[1] + 2), dtype=np.uint8)
-            cv2.floodFill(padded, ff_fill, (0, 0), 255)
-            interior_holes = (padded[1:-1, 1:-1] == 0).astype(np.uint8)
-            # Fill enclosed cavity basins up to 25% of frame (MoRTH Cl. 500 single patch limit)
-            max_interior = int(0.25 * h * w)
-            if 0 < int(interior_holes.sum()) <= max_interior:
-                binary = closed_cavity | interior_holes
-            else:
-                binary = closed_cavity
+            # Waterlogged crater basin infill: connect broken rim fragments with internal standing water
+            if image_rgb is not None:
+                try:
+                    work_img = cv2.resize(_as_uint8_rgb(image_rgb), (w, h), interpolation=cv2.INTER_AREA)
+                    gray = cv2.cvtColor(work_img, cv2.COLOR_RGB2GRAY)
+                    road_gray = gray[int(h * 0.38):, :]
+                    asphalt_val = float(np.percentile(road_gray, 25))
+                    puddle = (gray > asphalt_val + 26)
+                    puddle[:int(h * 0.38), :] = 0
+                    puddle = cv2.morphologyEx(puddle.astype(np.uint8), cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+                    k_touch = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+                    rim_touch = cv2.dilate(binary, k_touch)
+                    num_p, p_lab, p_st, _ = cv2.connectedComponentsWithStats(puddle, 8)
+                    for pi in range(1, num_p):
+                        p_area = p_st[pi, cv2.CC_STAT_AREA]
+                        if 25 <= p_area <= int(0.25 * frame_px):
+                            p_mask = (p_lab == pi)
+                            if (p_mask & (rim_touch > 0)).any():
+                                binary[p_mask] = 1
+                except Exception:
+                    pass
+
+            # Convex hull infill for each distinct crater: fills internal specular reflections within the cavity footprint
+            cnts, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for c_cnt in cnts:
+                ca = cv2.contourArea(c_cnt)
+                if ca >= 25:
+                    hull = cv2.convexHull(c_cnt)
+                    ha = cv2.contourArea(hull)
+                    if ha <= 0.25 * frame_px:
+                        cv2.drawContours(binary, [hull], -1, 1, -1)
 
         n, comp, stats, _cent = cv2.connectedComponentsWithStats(binary, connectivity=8)
         for i in range(1, n):
@@ -248,7 +267,7 @@ class DefectSegmenter:
         feats, (h, w) = extract_pixel_features(img)
 
         proba = self.clf.predict_proba(feats)
-        return mask_from_proba(proba, (h, w), (orig_h, orig_w), self.thresholds, min_blob_px)
+        return mask_from_proba(proba, (h, w), (orig_h, orig_w), self.thresholds, min_blob_px, image_rgb=img)
 
     def largest_component_box(self, mask, cls):
         """Bounding box of the biggest blob of `cls`, or None. (x, y, w, h)."""

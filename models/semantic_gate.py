@@ -31,8 +31,9 @@ def _resize(a, shape):
 
 
 def apply(seg_out, classifier, rgb, threshold=DEFAULT_THRESHOLD):
-    """Drop segmenter pothole pixels the classifier does not see as pothole.
+    """Drop segmenter pothole regions the classifier does not see as pothole.
     Returns seg_out (modified in place) with a 'semantic_gate' record."""
+    import cv2
     hm = heatmaps(classifier, rgb)
     pot = hm[POTHOLE]
     removed = 0
@@ -41,10 +42,20 @@ def apply(seg_out, classifier, rgb, threshold=DEFAULT_THRESHOLD):
         if m is None:
             continue
         p = pot if p_shape_ok(pot, m) else _resize(pot, m.shape[:2])
-        drop = (m == POTHOLE) & (p < threshold)
+        pothole_binary = (m == POTHOLE).astype(np.uint8)
+        if pothole_binary.sum() == 0:
+            continue
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(pothole_binary, connectivity=8)
+        drop = np.zeros_like(pothole_binary, dtype=bool)
+        for lbl in range(1, num_labels):
+            comp_mask = (labels == lbl)
+            comp_p_max = float(p[comp_mask].max()) if comp_mask.any() else 0.0
+            if comp_p_max < threshold:
+                drop |= comp_mask
         if key == "mask":
             removed = int(drop.sum())
-        m = m.copy(); m[drop] = 0
+        m = m.copy()
+        m[drop] = 0
         seg_out[key] = m
     mk = seg_out.get("mask")
     if mk is not None:

@@ -76,6 +76,10 @@ class CVCavityDetector:
             if w <= 0 or h <= 0:
                 continue
             feet_y = y + h
+            if feet_y < int(H * 0.38):
+                continue  # Above ground plane in sky/canopy
+            if h / float(max(1, w)) < 1.3:
+                continue  # Upright human aspect ratio requirement
             dist_m = round(max(1.5, 22.0 * (1.0 - (feet_y / float(H)) ** 0.85)), 1)
             pedestrians.append(
                 {
