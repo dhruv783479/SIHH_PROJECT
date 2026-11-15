@@ -962,7 +962,7 @@ class DeepInferencePipeline:
         return window & (mask == seg_cls)
 
     MIN_COMPONENT_FRACTION = {"crack": 0.0012, "pothole": 0.004}
-    MIN_COMPONENT_MARGIN = {"crack": 0.0, "pothole": 0.10}
+    MIN_COMPONENT_MARGIN = {"crack": 0.0, "pothole": 0.08}
 
     def _component_floor(self, seg_cls):
         """Floor for one class: its calibrated threshold plus that class's margin."""
@@ -1222,7 +1222,8 @@ class DeepInferencePipeline:
                         both_complete = (w1 >= 90 and w2 >= 90 and h1 >= 75 and h2 >= 75)
 
                         # Fragments of the same crater rim across an interior gravel/water basin gap
-                        if inter_w >= int(0.18 * min(w1, w2)) and gap_y <= 55:
+                        # Bound vertical gap to <= 20 px to prevent merging separate ruts/puddles down the lane
+                        if inter_w >= int(0.18 * min(w1, w2)) and gap_y <= 20:
                             is_merge = True
                         elif not both_complete and inter_h >= int(0.18 * min(h1, h2)) and gap_x <= 55:
                             is_merge = True
@@ -1269,7 +1270,7 @@ class DeepInferencePipeline:
             a2 = b2[2] * b2[3]
             iou = inter / float(a1 + a2 - inter)
             containment = inter / float(min(a1, a2))
-            if iou >= 0.20 or containment >= 0.35:
+            if iou >= 0.12 or containment >= 0.15:
                 return True
         return False
 
