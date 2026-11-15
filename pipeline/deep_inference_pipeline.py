@@ -415,7 +415,7 @@ class DeepInferencePipeline:
             obj_mask[max(0, oy - 8):min(H, oy + oh + 8), max(0, ox - 8):min(W, ox + ow + 8)] = True
         for obj in vehicle_detections:
             ox, oy, ow, oh = obj["bbox_pixels"]
-            oy1 = max(oy, oy + int(oh * 0.85))
+            oy1 = min(H, oy + oh + 4)
             obj_mask[max(0, oy):min(H, oy1), max(0, ox - 6):min(W, ox + ow + 6)] = True
         self._object_mask = obj_mask if obj_mask.any() else None
 
@@ -1214,20 +1214,7 @@ class DeepInferencePipeline:
                         a2 = w2 * h2
                         iou = inter / float(a1 + a2 - inter)
                         containment = inter / float(min(a1, a2))
-                        if iou >= 0.18 or containment >= 0.30:
-                            is_merge = True
-
-                    if not is_merge:
-                        gap_x = max(0, xi0 - xi1) if xi0 > xi1 else 0
-                        gap_y = max(0, yi0 - yi1) if yi0 > yi1 else 0
-                        # Two already complete substantial potholes in distinct wheel paths cannot merge horizontally
-                        both_complete = (w1 >= 90 and w2 >= 90 and h1 >= 75 and h2 >= 75)
-
-                        # Fragments of the same crater rim across an interior gravel/water basin gap
-                        # Bound vertical gap to <= 20 px to prevent merging separate ruts/puddles down the lane
-                        if inter_w >= int(0.18 * min(w1, w2)) and gap_y <= 20:
-                            is_merge = True
-                        elif not both_complete and inter_h >= int(0.18 * min(h1, h2)) and gap_x <= 55:
+                        if iou >= 0.15 or containment >= 0.25:
                             is_merge = True
 
                     if is_merge:
@@ -1272,7 +1259,7 @@ class DeepInferencePipeline:
             a2 = b2[2] * b2[3]
             iou = inter / float(a1 + a2 - inter)
             containment = inter / float(min(a1, a2))
-            if iou >= 0.12 or containment >= 0.15:
+            if iou >= 0.18 or containment >= 0.28:
                 return True
         return False
 

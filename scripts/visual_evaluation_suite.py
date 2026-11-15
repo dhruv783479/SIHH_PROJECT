@@ -102,17 +102,35 @@ def annotate_visual_frame(img_bgr, audit_result, title="Visual Test"):
         cv2.putText(canvas, banner, (bx + 6, by + bh + 2), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (212, 212, 45), 2, cv2.LINE_AA)
     elif len(road_dets) == 1:
         d = road_dets[0]
-        bp = d.get("bbox_pixels") or [0, 0, 50, 50]
+        bn = d.get("bbox_normalized")
+        bp = d.get("bbox_pixels")
+        if bn:
+            bx = int(round(bn[0] * W))
+            by = int(round(bn[1] * H))
+        elif bp:
+            bx, by = bp[0], bp[1]
+        else:
+            bx, by = 10, 30
         pct = int(round(d.get("confidence", 0.0) * 100))
-        lbl = f"{d.get('class_name', 'Defect').split()[0]} {pct}%"
-        cv2.putText(canvas, lbl, (bp[0], max(20, bp[1] - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (212, 212, 45), 2, cv2.LINE_AA)
+        lbl = f"#{1} {d.get('class_name', 'Defect').split()[0]} {pct}%"
+        (lw, lh), _ = cv2.getTextSize(lbl, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)
+        lx = max(6, min(W - lw - 10, bx))
+        ly = max(lh + 8, by - 6)
+        cv2.rectangle(canvas, (lx - 2, ly - lh - 4), (lx + lw + 6, ly + 4), (10, 15, 23), -1)
+        cv2.rectangle(canvas, (lx - 2, ly - lh - 4), (lx + lw + 6, ly + 4), (212, 212, 45), 1)
+        cv2.putText(canvas, lbl, (lx + 2, ly), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (212, 212, 45), 1, cv2.LINE_AA)
 
-    # Top status bar
+    # Top status bar with dynamic auto-scaling to avoid truncation
     pci = audit_result.get("astm_d6433_pci", {}).get("pci_score", "N/A")
     surf = audit_result.get("surface_material", {}).get("name", "Unknown Surface")
-    status_bar = f"ROAD-SHIELD VISUAL AUDIT | {title} | ASTM D6433 PCI: {pci} | {surf}"
+    short_surf = surf.split("(")[0].strip() if "(" in surf else surf
+    status_bar = f"ROAD-SHIELD | {title} | PCI: {pci} | {short_surf}"
+    font_scale = 0.45
+    (tw, th), _ = cv2.getTextSize(status_bar, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)
+    if tw > W - 16:
+        font_scale = max(0.30, font_scale * (W - 24) / float(tw))
     cv2.rectangle(canvas, (0, 0), (W, 28), (15, 23, 42), -1)
-    cv2.putText(canvas, status_bar, (10, 19), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (241, 245, 249), 1, cv2.LINE_AA)
+    cv2.putText(canvas, status_bar, (8, 19), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (241, 245, 249), 1, cv2.LINE_AA)
     
     return canvas
 
