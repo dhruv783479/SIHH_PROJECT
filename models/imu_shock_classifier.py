@@ -10,6 +10,20 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 
 
+def _patch_sklearn_estimator(est):
+    """Recursively patches scikit-learn attribute drift (e.g. multi_class removed in 1.8 but checked in 1.6)."""
+    if est is None:
+        return
+    if hasattr(est, "predict_proba") and not hasattr(est, "multi_class"):
+        setattr(est, "multi_class", "auto")
+    for sub in getattr(est, "estimators_", []):
+        _patch_sklearn_estimator(sub)
+    for name, sub in getattr(est, "named_steps", {}).items():
+        _patch_sklearn_estimator(sub)
+    for name, sub in getattr(est, "steps", []):
+        _patch_sklearn_estimator(sub)
+
+
 class IMUShockClassifier:
 
     CLASS_NAMES = ["Smooth Asphalt", "Unmarked Speed Breaker / Bump", "Marked Speed Breaker", "Pothole Impact"]
@@ -136,8 +150,13 @@ class IMUShockClassifier:
         """X_raw: (B, 100, 3). Returns (pred_ids, pothole_confidence, prob_matrix)."""
         if not self.is_ready:
             raise RuntimeError("Model has not been trained or loaded yet - call fit() or load().")
+        _patch_sklearn_estimator(self.pipeline)
         feats = self.extract_temporal_features(X_raw)
-        probs_partial = self.pipeline.predict_proba(feats)
+        try:
+            probs_partial = self.pipeline.predict_proba(feats)
+        except AttributeError:
+            _patch_sklearn_estimator(self.pipeline)
+            probs_partial = self.pipeline.predict_proba(feats)
         full_probs = np.zeros((probs_partial.shape[0], len(self.CLASS_NAMES)), dtype=np.float32)
         for i, cls in enumerate(self.pipeline.named_steps["clf"].classes_):
             full_probs[:, cls] = probs_partial[:, i]
@@ -151,6 +170,7 @@ class IMUShockClassifier:
 
     def load(self, path):
         self.pipeline = joblib.load(path)
+        _patch_sklearn_estimator(self.pipeline)
 
 
 class IMUShockCNN:

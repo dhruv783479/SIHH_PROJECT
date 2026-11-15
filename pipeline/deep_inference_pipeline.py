@@ -1810,7 +1810,18 @@ class DeepInferencePipeline:
             raw_imu = np.expand_dims(raw_imu, axis=0)
         delta_z = float(np.max(raw_imu[0, :, 2]) - np.min(raw_imu[0, :, 2]))
 
-        preds, pothole_conf, _ = self.imu_model.predict(raw_imu)
+        try:
+            preds, pothole_conf, _ = self.imu_model.predict(raw_imu)
+        except Exception as e:
+            cnn_onnx = os.path.join(self.ckpt_dir, "imu_shock_cnn.onnx")
+            cnn_json = os.path.join(self.ckpt_dir, "imu_shock_cnn.json")
+            if os.path.exists(cnn_onnx) and os.path.exists(cnn_json):
+                from models.imu_shock_classifier import IMUShockCNN
+                self.imu_model = IMUShockCNN(cnn_onnx, cnn_json)
+                self.imu_backend = "cnn"
+                preds, pothole_conf, _ = self.imu_model.predict(raw_imu)
+            else:
+                raise
         cls_name = IMUShockClassifier.CLASS_NAMES[int(preds[0])]
         p_imu = float(pothole_conf[0])
         return (
