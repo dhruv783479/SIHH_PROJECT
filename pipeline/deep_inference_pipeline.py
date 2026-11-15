@@ -577,13 +577,13 @@ class DeepInferencePipeline:
                         inter = (xi1 - xi0) * (yi1 - yi0)
                         a1 = b1[2] * b1[3]
                         a2 = b2[2] * b2[3]
-                        containment = inter / float(max(1, a1))
+                        containment = inter / float(max(1, min(a1, a2)))
                         # Cross-class suppression: ASTM D6433 & IRC:82 - cavity excavation subsumes internal fracture/crack
                         if other.get("class_id") == 2 and d.get("class_id") == 1 and containment >= 0.35:
                             is_nested = True
                             break
                         # Same class containment / heavy overlap suppression
-                        if d.get("class_id") == other.get("class_id") and (containment >= 0.60 or (inter / float(max(1, a1 + a2 - inter))) >= 0.40):
+                        if d.get("class_id") == other.get("class_id") and (containment >= 0.40 or (inter / float(max(1, a1 + a2 - inter))) >= 0.35):
                             is_nested = True
                             break
                         # General high containment: candidate d is almost completely inside existing defect
@@ -1085,9 +1085,11 @@ class DeepInferencePipeline:
                 binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, close_k)
                 cnts, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 for c_cnt in cnts:
-                    if cv2.contourArea(c_cnt) >= 25:
+                    ca = cv2.contourArea(c_cnt)
+                    if ca >= 25:
                         hull = cv2.convexHull(c_cnt)
-                        if cv2.contourArea(hull) <= 0.25 * frame_px:
+                        ha = cv2.contourArea(hull)
+                        if ha <= 0.25 * frame_px and ha <= 3.5 * ca:
                             cv2.drawContours(binary, [hull], -1, 1, -1)
             else:
                 binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE,
@@ -1138,6 +1140,8 @@ class DeepInferencePipeline:
                             y1 = min(H, y0 + ch_max)
                     if x1 - x0 < 8 or y1 - y0 < 8:
                         continue
+                    if (seg_cls == 2 or kind == 2) and (y1 - y0 < 22 or (y1 - y0 < 28 and (x1 - x0) / float(max(1, y1 - y0)) > 2.0)):
+                        continue  # Reject thin horizontal noise slivers and micro-scuffs
                     centroid_y = (y0 + y1) / 2.0
                     if centroid_y < self.ROAD_ROI_TOP_FRACTION * H:
                         continue
@@ -1166,7 +1170,7 @@ class DeepInferencePipeline:
         return out[: self.MAX_COMPONENTS]
 
     def _merge_overlapping_potholes(self, props, W, H):
-        """Merge truly overlapping duplicate pothole proposals (IoU >= 0.40 or containment >= 0.70)."""
+        """Merge truly overlapping duplicate or fractured crater rim pothole proposals."""
         pot = [b for b in props if b[5] == 2]
         rest = [b for b in props if b[5] != 2]
         merged = True
@@ -1175,30 +1179,49 @@ class DeepInferencePipeline:
             for i in range(len(pot)):
                 for j in range(i + 1, len(pot)):
                     a, b = pot[i], pot[j]
-                    xi0, yi0 = max(a[0], b[0]), max(a[1], b[1])
-                    xi1, yi1 = min(a[0] + a[2], b[0] + b[2]), min(a[1] + a[3], b[1] + b[3])
+                    x1, y1, w1, h1 = a[:4]
+                    x2, y2, w2, h2 = b[:4]
+                    xi0, yi0 = max(x1, x2), max(y1, y2)
+                    xi1, yi1 = min(x1 + w1, x2 + w2), min(y1 + h1, y2 + h2)
                     inter_w = max(0, xi1 - xi0)
                     inter_h = max(0, yi1 - yi0)
+
+                    comb_x0 = min(x1, x2)
+                    comb_y0 = min(y1, y2)
+                    comb_w = max(x1 + w1, x2 + w2) - comb_x0
+                    comb_h = max(y1 + h1, y2 + h2) - comb_y0
+                    comb_area = comb_w * comb_h
+
+                    if comb_area > int(0.42 * W * H):
+                        continue
+                    if comb_w > int(0.85 * W) or comb_h > int(0.65 * H):
+                        continue
+
                     is_merge = False
                     if inter_w > 0 and inter_h > 0:
                         inter = inter_w * inter_h
-                        a1 = a[2] * a[3]
-                        a2 = b[2] * b[3]
+                        a1 = w1 * h1
+                        a2 = w2 * h2
                         iou = inter / float(a1 + a2 - inter)
                         containment = inter / float(min(a1, a2))
-                        if iou >= 0.35 or containment >= 0.60:
+                        if iou >= 0.18 or containment >= 0.30:
+                            is_merge = True
+
+                    if not is_merge:
+                        gap_x = max(0, xi0 - xi1) if xi0 > xi1 else 0
+                        gap_y = max(0, yi0 - yi1) if yi0 > yi1 else 0
+                        # Fragments of the same crater rim across an interior gravel/water basin gap
+                        if inter_w >= int(0.18 * min(w1, w2)) and gap_y <= 55:
+                            is_merge = True
+                        elif inter_h >= int(0.18 * min(h1, h2)) and gap_x <= 55:
                             is_merge = True
 
                     if is_merge:
-                        x0, y0 = min(a[0], b[0]), min(a[1], b[1])
-                        x1, y1 = max(a[0] + a[2], b[0] + b[2]), max(a[1] + a[3], b[1] + b[3])
-                        if ((x1 - x0) * (y1 - y0)) > int(0.55 * W * H):
-                            continue
                         wa, wb = a[8] or 0.0, b[8] or 0.0
-                        mp = round((a[7] * wa + b[7] * wb) / (wa + wb), 4) if (wa + wb) > 0 else a[7]
-                        pot[i] = [x0, y0, x1 - x0, y1 - y0, a[4] + b[4], 2, "segmentation", mp,
+                        mp = round((a[7] * wa + b[7] * wb) / (wa + wb), 4) if (wa + wb) > 0 else max(a[7], b[7])
+                        pot[i] = [comb_x0, comb_y0, comb_w, comb_h, a[4] + b[4], 2, "segmentation", mp,
                                   round(wa + wb, 5),
-                                  ((x1 - x0) * (y1 - y0)) / float(W * H) > self.MAX_COMPONENT_BOX_FRACTION]
+                                  comb_area / float(W * H) > self.MAX_COMPONENT_BOX_FRACTION]
                         del pot[j]
                         merged = True
                         break
@@ -1221,7 +1244,9 @@ class DeepInferencePipeline:
     def _can_merge_defects(b1, b2, W, H):
         comb_w = max(b1[0] + b1[2], b2[0] + b2[2]) - min(b1[0], b2[0])
         comb_h = max(b1[1] + b1[3], b2[1] + b2[3]) - min(b1[1], b2[1])
-        if (comb_w * comb_h) > int(0.25 * W * H):
+        if (comb_w * comb_h) > int(0.42 * W * H):
+            return False
+        if comb_w > int(0.85 * W) or comb_h > int(0.65 * H):
             return False
         xi0, yi0 = max(b1[0], b2[0]), max(b1[1], b2[1])
         xi1, yi1 = min(b1[0] + b1[2], b2[0] + b2[2]), min(b1[1] + b1[3], b2[1] + b2[3])
@@ -1233,7 +1258,7 @@ class DeepInferencePipeline:
             a2 = b2[2] * b2[3]
             iou = inter / float(a1 + a2 - inter)
             containment = inter / float(min(a1, a2))
-            if iou >= 0.40 or containment >= 0.70:
+            if iou >= 0.20 or containment >= 0.35:
                 return True
         return False
 
@@ -1298,7 +1323,7 @@ class DeepInferencePipeline:
         active_px = int((sub_pp >= thresh).sum())
         min_active = max(18, int(sub_pp.size * 0.025))
         min_p_peak = 0.45 if cls_id == 2 else 0.50
-        if active_px < min_active or float(sub_pp.max()) < min_p_peak or float(sub_pp.mean()) < 0.08:
+        if active_px < min_active or float(sub_pp.max()) < min_p_peak or float(sub_pp.mean()) < 0.035:
             return None
         roi_crop = img_np[int(H * self.ROAD_ROI_TOP_FRACTION):, :]
         if roi_crop.size == 0:
