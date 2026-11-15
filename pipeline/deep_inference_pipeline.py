@@ -1142,7 +1142,7 @@ class DeepInferencePipeline:
                             y1 = min(H, y0 + ch_max)
                     if x1 - x0 < 8 or y1 - y0 < 8:
                         continue
-                    if (seg_cls == 2 or kind == 2) and (y1 - y0 < 22 or (y1 - y0 < 28 and (x1 - x0) / float(max(1, y1 - y0)) > 2.0)):
+                    if (seg_cls == 2 or kind == 2) and (y1 - y0 < 14 or (y1 - y0 < 18 and (x1 - x0) / float(max(1, y1 - y0)) > 3.5)):
                         continue  # Reject thin horizontal noise slivers and micro-scuffs
                     centroid_y = (y0 + y1) / 2.0
                     if centroid_y < self.ROAD_ROI_TOP_FRACTION * H:
