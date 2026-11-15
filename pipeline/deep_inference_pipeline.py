@@ -1217,6 +1217,21 @@ class DeepInferencePipeline:
                         if iou >= 0.15 or containment >= 0.25:
                             is_merge = True
 
+                    if not is_merge:
+                        gap_x = max(0, xi0 - xi1) if xi0 > xi1 else 0
+                        gap_y = max(0, yi0 - yi1) if yi0 > yi1 else 0
+
+                        # Same-cavity basin cohesion:
+                        # 1. Merge left & right rims of the SAME cavity across an interior aggregate/water basin (horizontal)
+                        # 2. Merge top & bottom lip of the SAME cavity across vertical rim contact (vertical gap <= 8px)
+                        max_w = int(W * 0.75) if comb_y1 >= int(0.65 * H) else int(W * 0.50)
+                        is_rim_contact = (
+                            (gap_y <= 15 and gap_x <= int(W * 0.16) and inter_h >= int(0.20 * min(h1, h2))) or
+                            (gap_y <= 8 and inter_w >= int(0.40 * min(w1, w2)))
+                        )
+                        if is_rim_contact and comb_w <= max_w and comb_h <= int(H * 0.45):
+                            is_merge = True
+
                     if is_merge:
                         wa, wb = a[8] or 0.0, b[8] or 0.0
                         mp = round((a[7] * wa + b[7] * wb) / (wa + wb), 4) if (wa + wb) > 0 else max(a[7], b[7])
@@ -1342,12 +1357,29 @@ class DeepInferencePipeline:
     def _classify_region(self, img_np, gray, bbox, W, H, mean_intensity):
         """Classify candidate region and compute physical dimensions."""
         bx, by, bw, bh = bbox[:4]
-        cx, cy = bx + bw // 2, by + bh // 2
-        cw = max(96, int(round(bw * 1.30)))
-        ch = max(96, int(round(bh * 1.30)))
-        x0 = max(0, min(W - cw, cx - cw // 2))
-        y0 = max(0, min(H - ch, cy - ch // 2))
-        crop = img_np[y0:min(H, y0 + ch), x0:min(W, x0 + cw)]
+        kind = bbox[5] if len(bbox) > 5 else 2
+        if kind == 2:
+            # ASTM D6433 minimum physical dimensions: reject micro-slivers and sub-scale scuffs
+            if bh < 18 or bw < 22 or (bh < 22 and bw / float(max(1, bh)) > 2.8):
+                return None
+            if (bw * bh) < int(0.003 * W * H):
+                return None
+
+        # Check vehicle exclusion mask
+        obj_m = getattr(self, "_object_mask", None)
+        if obj_m is not None:
+            sub_obj = obj_m[by:by + bh, bx:bx + bw]
+            if sub_obj.size and (float(sub_obj.sum()) / float(sub_obj.size)) > 0.20:
+                return None
+
+        # Proportional context margin: 15% padding, bounded so it never reaches into distant defects
+        mx = max(8, int(bw * 0.15))
+        my = max(8, int(bh * 0.15))
+        x0 = max(0, bx - mx)
+        y0 = max(0, by - my)
+        x1 = min(W, bx + bw + mx)
+        y1 = min(H, by + bh + my)
+        crop = img_np[y0:y1, x0:x1]
         if crop.size == 0:
             crop = img_np[by : by + bh, bx : bx + bw]
         if crop.size == 0:
