@@ -420,7 +420,9 @@ class DeepInferencePipeline:
         self._object_mask = obj_mask if obj_mask.any() else None
 
         seg_boxes = self._segmentation_proposals(H, W)
-        heuristic = self.cv_detector.extract_salient_regions(img_np, excluded_boxes=pedestrians)
+        heuristic = []
+        if not seg_boxes and not damage_boxes:
+            heuristic = self.cv_detector.extract_salient_regions(img_np, excluded_boxes=pedestrians)
         for db in (damage_boxes or []):
             dbx, dby, dbw, dbh = db["bbox_pixels"]
             if (dby + dbh * 0.5) >= int(H * self.ROAD_ROI_TOP_FRACTION) and dbw >= 14 and dbh >= 12:
@@ -610,7 +612,7 @@ class DeepInferencePipeline:
         dag_exec.mark("N6_pinhole_ipm")
 
         if not detections and not bboxes and not pedestrians:
-            normal = self._normal_road(mean_intensity, std_intensity, corridor_id, latitude, longitude, chainage_km, t0,
+            normal = self._normal_road(img_np, mean_intensity, std_intensity, corridor_id, latitude, longitude, chainage_km, t0,
                                        pavement_age_yr=pavement_age_yr)
             normal["scene_objects"] = scene_objects
             normal["scene_summary"] = scene_summary
@@ -1895,12 +1897,13 @@ class DeepInferencePipeline:
             "multi_target_summary": "Non-pavement surface rejected by optical texture gate.",
         }
 
-    def _normal_road(self, mean_intensity, std_intensity, corridor_id, latitude, longitude, chainage_km, t0,
+    def _normal_road(self, img_np, mean_intensity, std_intensity, corridor_id, latitude, longitude, chainage_km, t0,
                      pavement_age_yr=None):
         entry = self._normal_road_entry()
         if pavement_age_yr is None:
             pavement_age_yr = self.DEFAULT_PAVEMENT_AGE_YR
         pci, rutting_mm, iri_roughness = self._compute_pci([], pavement_age_yr)
+        surface_analysis = self.surface_classifier.analyze_surface(img_np, roi_top_fraction=self.ROAD_ROI_TOP_FRACTION)
         elapsed_ms = round((time.time() - t0) * 1000.0, 2)
         return {
             "status": "ROAD_INSPECTION_NORMAL",
@@ -1924,14 +1927,7 @@ class DeepInferencePipeline:
             },
             "pavement_pci": pci["pci_score"],
             "pci_category": pci["rating_category"],
-            "surface_material": {
-                "name": "Flexible Bituminous Pavement (Asphalt)",
-                "code": "flexible_bituminous_asphalt",
-                "civil_standard": "IRC:37-2018 / IRC:82-2015",
-                "confidence": 0.95,
-                "bitumen_patching_applicable": True,
-                "trained_checkpoint_loaded": bool(getattr(self.surface_classifier, "_trained_model", None) is not None),
-            },
+            "surface_material": surface_analysis,
             "metric_3d_depth": None,
             "vimu_temporal_fusion": {
                 "physical_verification_status": "NORMAL_ROAD_NO_DEFECT",

@@ -235,14 +235,14 @@ class SurfaceTypeClassifier:
         best_cls_id = int(max(probs, key=probs.get))
         best_conf = float(probs[best_cls_id])
 
-        # Strict hysteresis: asphalt is the primary engineered carriageway prior
+        # Reasonable hysteresis for confidence; do not require sky foliage for earthen ground
         if best_cls_id == 3 and (best_conf < 0.65 or high_freq_ratio < 0.50):
             best_cls_id = 0
             best_conf = probs[0]
-        elif best_cls_id == 2 and (best_conf < 0.42 or rural_foliage_evidence < 0.25):
+        elif best_cls_id == 2 and best_conf < 0.35:
             best_cls_id = 0
             best_conf = probs[0]
-        elif best_cls_id == 1 and (best_conf < 0.50 or concrete_lum_evidence < 0.25):
+        elif best_cls_id == 1 and best_conf < 0.40:
             best_cls_id = 0
             best_conf = probs[0]
 
