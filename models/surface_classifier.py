@@ -71,12 +71,13 @@ SURFACE_CLASSES = {
         "code": "unpaved_rural_earthen_dirt",
         "name": "Unpaved Rural Earthen / Dirt / Gravel Road",
         "civil_standard": "IRC:SP:72-2015 / IRC:SP:20 (PMGSY Rural Road Manual)",
-        "morth_section": "IRC:SP:20 Cl. 8 (Maintenance of Earthen & Gravel Roads)",
-        "repair_method": "Motor-grader scarifying, subgrade camber reshaping, gravel replenishment, and drainage ditch restoration (Bituminous patching NOT applicable)",
+        "morth_section": "IRC:SP:20 Cl. 8 / IRC:SP:72 Cl. 6 (Maintenance of Earthen & Gravel Roads)",
+        "repair_method": "Motor-grader scarifying, subgrade camber reprofiling (4% crossfall), gravel wear course replenishment (75mm), and vibratory rolling (PMGSY Cl. 300 / IRC:SP:72 Cl. 6)",
         "bitumen_patching_applicable": False,
-        "max_single_patch_m2": 15.0,
+        "max_single_patch_m2": 35.0,
         "base_unit_rate_inr_per_tonne": 0.0,
-        "rural_grading_cost_per_m2": 45.0,
+        "base_mobilization_cost_inr": 8500.0,
+        "rural_grading_cost_per_m2": 220.0,
     },
     3: {
         "id": 3,
@@ -167,7 +168,7 @@ class SurfaceTypeClassifier:
             texture_energy = float(np.var(gray_roi))
             high_freq_ratio = 0.05
 
-        # Extract green foliage / rural canopy context from upper borders
+        # Extract green foliage / rural canopy context from upper and side borders
         hsv_full = cv2.cvtColor(img, cv2.COLOR_RGB2HSV) if cv2 is not None else None
         if hsv_full is not None:
             # Green foliage: Hue 25-85 in OpenCV scale (0-180), Saturation >= 25
@@ -176,7 +177,7 @@ class SurfaceTypeClassifier:
             foliage_left = float(is_green[:upper_h, :int(W * 0.35)].mean())
             foliage_right = float(is_green[:upper_h, int(W * 0.65):].mean())
             foliage_upper = float(is_green[:upper_h, :].mean())
-            rural_foliage_evidence = max(0.0, min(1.0, (max(foliage_left, foliage_right, foliage_upper) - 0.20) / 0.35))
+            rural_foliage_evidence = max(0.0, min(1.0, (max(foliage_left, foliage_right, foliage_upper) - 0.28) / 0.35))
         else:
             rural_foliage_evidence = 0.0
 

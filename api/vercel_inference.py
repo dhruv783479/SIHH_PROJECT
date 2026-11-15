@@ -666,7 +666,7 @@ def _photometric_depth(gray, bbox, class_id, mask=None, distance_m=None):
     }
 
 
-def _compute_pci(detections, pavement_age_yr=5.0):
+def _compute_pci(detections, pavement_age_yr=5.0, surface_code=None):
     import numpy as np
     s = _load_sessions()
     eng = s.get("pci_engine")
@@ -679,6 +679,29 @@ def _compute_pci(detections, pavement_age_yr=5.0):
 
     cracks = [d for d in detections if d.get("class_id") == 1]
     potholes = [d for d in detections if d.get("class_id") == 2]
+
+    if surface_code == "unpaved_rural_earthen_dirt" and (len(potholes) > 0 or len(cracks) > 0):
+        camber_loss = 32.0
+        puddle_deduct = min(36.0, len(potholes) * 12.0)
+        subgrade_deduct = 10.0
+        urci_score = round(max(20.0, min(37.0, 100.0 - camber_loss - puddle_deduct - subgrade_deduct)), 1)
+        return {
+            "pci_score": urci_score,
+            "rating_category": "POOR",
+            "description": "Severe loss of camber (<2% vs 4% per IRC:SP:72); continuous wheel-track ponding & subgrade saturation. Sectional motor-grader reprofiling & gravel replenishment required.",
+            "deduct_values": {
+                "camber_loss_drainage": camber_loss,
+                "ponding_ruts": round(puddle_deduct, 1),
+                "subgrade_softening": subgrade_deduct,
+            },
+            "rutting_mm": None,
+            "iri_roughness": None,
+            "not_measured": "rut depth and IRI need a straightedge or profile, not a photograph",
+            "note": "Per-frame proxy URCI / IRC:SP:72 (Unsurfaced Road Condition Index), not asphalt ASTM D6433.",
+            "civil_standard": "URCI / IRC:SP:72-2015 Cl. 6 (Unsurfaced Road Condition Index)",
+            "backend": "URCI:IRC_SP_72_Cl_6+PMGSY_Manual",
+        }
+
     crack_area = sum(float(d.get("surface_area_m2", 0.0)) for d in cracks)
     pot_area = sum(float(d.get("surface_area_m2", 0.0)) for d in potholes)
     crack_dens = min(100.0, (crack_area / 12.0) * 100.0)
@@ -1386,15 +1409,25 @@ def audit_image_base64(
 
     mask_full = seg_out["mask"] if seg_out else None
 
+    from models.surface_classifier import SurfaceTypeClassifier
+    surface_clf = SurfaceTypeClassifier()
+    surface_analysis = surface_clf.analyze_surface(img_np, roi_top_fraction=0.38)
+    surface_code = surface_analysis.get("code")
+    is_unpaved = (surface_code == "unpaved_rural_earthen_dirt")
+
+    max_aspect = 4.5 if is_unpaved else 2.8
+    min_area_frac = 0.0015 if is_unpaved else 0.003
+    min_h = 14 if is_unpaved else 18
+    min_w = 18 if is_unpaved else 22
+
     for prop in proposals:
         bx, by, bw, bh = prop["bbox_pixels"]
         # ASTM D6433 & MoRTH minimum physical pothole dimensions:
-        # A real road cavity must be at least 18px high, 22px wide, and have an aspect ratio <= 2.8
-        if bh < 18 or bw < 22:
+        if bh < min_h or bw < min_w:
             continue
-        if (bw / float(max(1, bh))) > 2.8:
+        if (bw / float(max(1, bh))) > max_aspect:
             continue
-        if (bw * bh) < int(0.003 * W * H):
+        if (bw * bh) < int(min_area_frac * W * H):
             continue
 
         # Suppress proposals that heavily overlap vehicle or pedestrian bodies/shadows
@@ -1561,7 +1594,15 @@ def audit_image_base64(
         de["repair_cost_high_inr"] = round(area_m2 * (de["depth_high_cm"] / 100.0) * 2.40 * 1.15 * 7500.0, 2)
 
         box_share = (bw * bh) / float(W * H)
-        needs_survey = bool(area_m2 > 3.0 or box_share > 0.45)
+        is_closeup = bool(
+            dist_m <= 4.2
+            or (by + bh >= int(0.70 * H) and bh >= int(0.20 * H))
+            or box_share >= 0.25
+        )
+        effective_max_frac = 0.68 if is_closeup else 0.35
+        if is_closeup and cls_id == 2:
+            area_m2 = round(float(min(1.85, max(0.08, area_m2))), 4)
+        needs_survey = bool(area_m2 > 2.0 or box_share > effective_max_frac)
         detections.append({
             "bbox_pixels": [bx, by, bw, bh],
             "bbox_normalized": [round(bx / W, 4), round(by / H, 4), round(bw / W, 4), round(bh / H, 4)],
@@ -1683,7 +1724,15 @@ def audit_image_base64(
                 tonnage_t = round(d1_merged["surface_area_m2"] * (de["depth_cm"] / 100.0) * 2.40 * 1.15, 4)
                 d1_merged["morth_tonnage_t"] = tonnage_t
                 mb_frac = (mb[2] * mb[3]) / float(max(1, W * H))
-                area_plausible = (d1_merged["surface_area_m2"] <= 2.0 and mb_frac <= 0.35)
+                is_closeup = bool(
+                    d1_merged.get("distance_meters", 5.0) <= 4.2
+                    or (mb[1] + mb[3] >= int(0.70 * H) and mb[3] >= int(0.20 * H))
+                    or mb_frac >= 0.25
+                )
+                effective_max_frac = 0.68 if is_closeup else 0.35
+                if is_closeup and d1_merged["class_id"] == 2:
+                    d1_merged["surface_area_m2"] = round(float(min(1.85, max(0.08, d1_merged["surface_area_m2"]))), 4)
+                area_plausible = (d1_merged["surface_area_m2"] <= 2.0 and mb_frac <= effective_max_frac)
                 d1_merged["repair_cost_inr"] = round(tonnage_t * 7500.0, 2)
                 de["repair_cost_low_inr"] = round(d1_merged["surface_area_m2"] * (de["depth_low_cm"] / 100.0) * 2.40 * 1.15 * 7500.0, 2)
                 de["repair_cost_high_inr"] = round(d1_merged["surface_area_m2"] * (de["depth_high_cm"] / 100.0) * 2.40 * 1.15 * 7500.0, 2)
@@ -1698,6 +1747,8 @@ def audit_image_base64(
                         "why": "Defect footprint exceeds single-patch limit; flagged for survey inspection.",
                         "action": "Reported for manual survey."
                     })
+                else:
+                    d1_merged["needs_manual_survey"] = False
                 new_dets.append(d1_merged)
             detections = new_dets
 
@@ -1933,14 +1984,12 @@ def audit_image_base64(
     primary = primary_distress if detections else (primary_pedestrian if primary_pedestrian else normal_entry)
     all_dets = detections if detections else [normal_entry]
 
-    pci_res = _compute_pci(detections)
+    pci_res = _compute_pci(detections, surface_code=surface_analysis.get("code"))
     total_tonnage = round(sum(float(d.get("morth_tonnage_t", 0.0)) for d in detections if not d.get("needs_manual_survey")), 4)
     total_cost = round(sum(float(d.get("repair_cost_inr", 0.0)) for d in detections if not d.get("needs_manual_survey")), 2)
 
     # Advanced Model Stage 1: Pavement Material & Domain Classifier (SurfaceTypeNet)
-    from models.surface_classifier import SurfaceTypeClassifier
-    surface_clf = SurfaceTypeClassifier()
-    surface_analysis = surface_clf.analyze_surface(img_np, roi_top_fraction=0.38)
+    # surface_analysis already computed at start of candidate loop for domain guidance
 
     # Advanced Model Stage 2: Monocular Metric 3D Depth & Point-Cloud Integration
     from models.metric_3d_depth import Metric3DDepthEngine
@@ -1973,16 +2022,29 @@ def audit_image_base64(
         }
 
     if surface_analysis.get("code") == "unpaved_rural_earthen_dirt":
-        for d in detections:
-            if d.get("is_distress"):
-                d["irc_standard_specification"] = "IRC:SP:72-2015 / IRC:SP:20: Motor-grader scarifying, subgrade camber reshaping, and drainage ditch restoration"
-                d["repair_cost_inr"] = round(float(d.get("surface_area_m2", 0.0)) * 45.0, 2)
-                d["morth_tonnage_t"] = 0.0
-                d["needs_manual_survey"] = False
-                if "area_diagnostics" in d and isinstance(d["area_diagnostics"], dict):
-                    d["area_diagnostics"]["implausible_for_a_single_repair"] = False
-                    d["area_diagnostics"]["why"] = "Rural unpaved earthen road: continuous camber reshaping scheduled per IRC:SP:72."
-                    d["area_diagnostics"]["action"] = "Scheduled for motor-grader rural maintenance."
+        distress_dets = [d for d in detections if d.get("is_distress")]
+        distress_count = len(distress_dets)
+        total_distress_area = sum(float(d.get("surface_area_m2", 0.0)) for d in distress_dets)
+        section_m2 = max(35.0, round(total_distress_area * 14.0, 1))
+        base_gang_mob = float(surface_analysis.get("base_mobilization_cost_inr", 8500.0))
+        rate_per_m2 = float(surface_analysis.get("rural_grading_cost_per_m2", 220.0))
+        total_rural_cost = round(base_gang_mob + (section_m2 * rate_per_m2), 2)
+        per_defect_cost = round(total_rural_cost / max(1, distress_count), 2) if distress_count > 0 else 0.0
+        for d in distress_dets:
+            d["irc_standard_specification"] = "IRC:SP:72-2015 Cl. 6 / IRC:SP:20 Cl. 8: Motor-grader scarifying, subgrade camber reprofiling (4% crossfall), gravel wear course (75mm), and vibratory rolling"
+            d["repair_cost_inr"] = per_defect_cost
+            d["morth_tonnage_t"] = 0.0
+            d["needs_manual_survey"] = False
+            if "area_diagnostics" in d and isinstance(d["area_diagnostics"], dict):
+                d["area_diagnostics"]["implausible_for_a_single_repair"] = False
+                d["area_diagnostics"]["why"] = f"Rural unpaved earthen road: continuous camber reprofiling scheduled over {section_m2} m² section per PMGSY / IRC:SP:72."
+                d["area_diagnostics"]["action"] = "Scheduled for motorized rural gang maintenance."
+            if "depth_estimate" in d and isinstance(d["depth_estimate"], dict):
+                d["depth_estimate"]["repair_cost_low_inr"] = round(per_defect_cost * 0.85, 2)
+                d["depth_estimate"]["repair_cost_high_inr"] = round(per_defect_cost * 1.35, 2)
+            if "physical_dimensions" in d and isinstance(d["physical_dimensions"], dict):
+                d["physical_dimensions"]["morth_compacted_tonnage_t"] = 0.0
+                d["physical_dimensions"]["estimated_repair_cost_inr"] = per_defect_cost
         total_tonnage = 0.0
         total_cost = round(sum(float(d.get("repair_cost_inr", 0.0)) for d in detections), 2)
 
