@@ -1191,10 +1191,18 @@ class DeepInferencePipeline:
                     comb_w = max(x1 + w1, x2 + w2) - comb_x0
                     comb_h = max(y1 + h1, y2 + h2) - comb_y0
                     comb_area = comb_w * comb_h
+                    comb_y1 = comb_y0 + comb_h
 
+                    # Perspective carriageway width guard:
+                    # In upper/midground half (comb_y0 < 0.48*H and comb_y1 < 0.72*H), road converges towards horizon,
+                    # so a single pothole cannot exceed a single wheel-path width (comb_w <= 0.42*W).
+                    # In near-field foreground (comb_y1 >= 0.72*H), macro cavities can span up to 0.75*W.
+                    max_w_allowed = int(W * 0.42) if (comb_y0 < 0.48 * H and comb_y1 < 0.72 * H) else int(W * 0.75)
+                    if comb_w > max_w_allowed:
+                        continue
                     if comb_area > int(0.42 * W * H):
                         continue
-                    if comb_w > int(0.85 * W) or comb_h > int(0.65 * H):
+                    if comb_h > int(0.65 * H):
                         continue
 
                     is_merge = False
@@ -1210,10 +1218,13 @@ class DeepInferencePipeline:
                     if not is_merge:
                         gap_x = max(0, xi0 - xi1) if xi0 > xi1 else 0
                         gap_y = max(0, yi0 - yi1) if yi0 > yi1 else 0
+                        # Two already complete substantial potholes in distinct wheel paths cannot merge horizontally
+                        both_complete = (w1 >= 90 and w2 >= 90 and h1 >= 75 and h2 >= 75)
+
                         # Fragments of the same crater rim across an interior gravel/water basin gap
                         if inter_w >= int(0.18 * min(w1, w2)) and gap_y <= 55:
                             is_merge = True
-                        elif inter_h >= int(0.18 * min(h1, h2)) and gap_x <= 55:
+                        elif not both_complete and inter_h >= int(0.18 * min(h1, h2)) and gap_x <= 55:
                             is_merge = True
 
                     if is_merge:
