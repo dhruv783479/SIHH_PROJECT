@@ -476,6 +476,11 @@ class DeepInferencePipeline:
                 continue
             if (by + bh * 0.5) < int(H * 0.22) and bw > int(W * 0.40) and d.get("area_method") != "segmentation_mask":
                 continue
+            # Suppress lateral verge/gutter artifacts if valid carriageway distress exists
+            if d.get("class_id") == 1 and (bx <= 35 or bx + bw >= W - 35) and float(d.get("confidence", 0.0)) < 0.55:
+                carriageway_cracks = [od for od in distress_dets if od.get("class_id") == 1 and od != d and od.get("bbox_pixels") and (od["bbox_pixels"][0] > 35 and od["bbox_pixels"][0] + od["bbox_pixels"][2] < W - 35)]
+                if carriageway_cracks:
+                    continue
             filtered_distress.append(d)
 
         if len(filtered_distress) > 1:
@@ -542,19 +547,22 @@ class DeepInferencePipeline:
                         or (mb[1] + mb[3] >= int(0.70 * H) and mb[3] >= int(0.20 * H))
                         or mb_frac >= 0.25
                     )
-                    effective_max_frac = 0.68 if is_closeup else self.MAX_COMPONENT_BOX_FRACTION
+                    effective_max_frac = self.MAX_COMPONENT_BOX_FRACTION
                     if is_closeup and d1_merged.get("class_id") == 2:
                         d1_merged["surface_area_m2"] = round(float(min(1.85, max(0.08, d1_merged["surface_area_m2"]))), 4)
                     area_plausible = (d1_merged["surface_area_m2"] <= self.MAX_SINGLE_REPAIR_AREA_M2
                                       and mb_frac <= effective_max_frac)
-                    d1_merged["repair_cost_inr"] = round(tonnage_t * 7500.0, 2)
-                    de["repair_cost_low_inr"] = round(d1_merged["surface_area_m2"] * (de.get("depth_low_cm", depth_cm) / 100.0) * 2.40 * 1.15 * 7500.0, 2)
-                    de["repair_cost_high_inr"] = round(d1_merged["surface_area_m2"] * (de.get("depth_high_cm", depth_cm) / 100.0) * 2.40 * 1.15 * 7500.0, 2)
-                    if not area_plausible:
+                    if area_plausible:
+                        d1_merged["needs_manual_survey"] = False
+                        d1_merged["repair_cost_inr"] = round(tonnage_t * 7500.0, 2)
+                        de["repair_cost_low_inr"] = round(d1_merged["surface_area_m2"] * (de.get("depth_low_cm", depth_cm) / 100.0) * 2.40 * 1.15 * 7500.0, 2)
+                        de["repair_cost_high_inr"] = round(d1_merged["surface_area_m2"] * (de.get("depth_high_cm", depth_cm) / 100.0) * 2.40 * 1.15 * 7500.0, 2)
+                    else:
                         d1_merged["needs_manual_survey"] = True
-                        if getattr(self, "_current_corridor_id", "") != "STRESS_TEST":
-                            d1_merged["morth_tonnage_t"] = 0.0
-                            d1_merged["repair_cost_inr"] = 0.0
+                        d1_merged["morth_tonnage_t"] = 0.0
+                        d1_merged["repair_cost_inr"] = 0.0
+                        de["repair_cost_low_inr"] = 0.0
+                        de["repair_cost_high_inr"] = 0.0
                         d1_merged["area_diagnostics"] = dict(d1_merged.get("area_diagnostics") or {})
                         d1_merged["area_diagnostics"].update({
                             "implausible_for_a_single_repair": True,
@@ -564,8 +572,6 @@ class DeepInferencePipeline:
                             "why": "Defect footprint exceeds single-patch limit; flagged for survey inspection.",
                             "action": "Reported for manual survey."
                         })
-                    else:
-                        d1_merged["needs_manual_survey"] = False
                     d1_merged["depth_estimate"] = de
                     if "physical_dimensions" in d1_merged:
                         d1_merged["physical_dimensions"]["surface_area_m2"] = d1_merged["surface_area_m2"]
@@ -1146,8 +1152,6 @@ class DeepInferencePipeline:
             min_px = max(45, int(0.0012 * frame_px)) if seg_cls == 2 else _min_px_for("crack")
             for i in range(1, n):
                 area = int(st[i, cv2.CC_STAT_AREA])
-                if area < min_px:
-                    continue
                 pm = proba.get(seg_cls)
                 if pm is not None:
                     comp_vals = pm[lab == i]
@@ -1160,11 +1164,18 @@ class DeepInferencePipeline:
                         mean_p = float(comp_vals.mean())
                 else:
                     mean_p = 1.0
+
+                if seg_cls == 1 and area >= 18 and mean_p >= 0.65:
+                    pass  # Retain genuine high-confidence fine crack fissures
+                elif area < min_px:
+                    continue
+
                 f_cls_cur = getattr(self, "_frame_cls", None) or {}
                 floor_adj = 0.06 if (f_cls_cur.get("class_id") == seg_cls and float(f_cls_cur.get("confidence", 0.0)) >= 0.70) else 0.0
                 if getattr(self, "_surface_code", None) == "unpaved_rural_earthen_dirt" and seg_cls == 2:
                     floor_adj = max(floor_adj, 0.08)
-                if mean_p < (self._component_floor(seg_cls) - floor_adj):
+                req_floor = self._component_floor(seg_cls) - floor_adj
+                if mean_p < req_floor:
                     continue
                 # Keep whole coherent cavity intact - do not shatter into micro-confetti
                 sub_regions = [(int(st[i, cv2.CC_STAT_LEFT]), int(st[i, cv2.CC_STAT_TOP]),
@@ -1657,7 +1668,7 @@ class DeepInferencePipeline:
                 or (by + bh >= int(0.70 * H) and bh >= int(0.20 * H))
                 or box_fraction_here >= 0.25
             )
-            effective_max_frac = 0.68 if is_closeup else self.MAX_COMPONENT_BOX_FRACTION
+            effective_max_frac = self.MAX_COMPONENT_BOX_FRACTION
             if is_closeup and cls_id == 2:
                 area_m2 = round(float(min(1.85, max(0.08, area_m2))), 4)
             area_plausible = (area_m2 <= self.MAX_SINGLE_REPAIR_AREA_M2
@@ -1751,12 +1762,20 @@ class DeepInferencePipeline:
             by = int(H * 0.08)
             bw = int(W * 0.32)
             bh = int(H * 0.35)
-        elif cls_id in (4, 5):
-            # Carriageway pavement span for missing zebra crossing / missing road divider
-            bx = int(W * 0.12)
+        elif cls_id == 4:
+            m = getattr(self, "_markings", None) or {}
+            if m.get("found") and m.get("bbox_pixels"):
+                bx, by, bw, bh = m["bbox_pixels"]
+            else:
+                bx = int(W * 0.18)
+                by = int(H * 0.62)
+                bw = int(W * 0.64)
+                bh = int(H * 0.30)
+        elif cls_id == 5:
+            bx = int(W * 0.42)
             by = int(H * 0.52)
-            bw = int(W * 0.76)
-            bh = int(H * 0.38)
+            bw = int(W * 0.16)
+            bh = int(H * 0.42)
         else:
             bx = int(W * 0.10)
             by = int(H * max(0.45, self.ROAD_ROI_TOP_FRACTION))

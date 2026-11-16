@@ -561,7 +561,7 @@ function render(d, ms) {
   const pci = d.astm_d6433_pci || {};
   const de = top.depth_estimate;
 
-  const costRange = de && de.repair_cost_low_inr != null
+  const costRange = de && de.repair_cost_low_inr != null && !top.needs_manual_survey && de.repair_cost_low_inr > 0
     ? `<div class="range-note">Cost range ${fmt.inr(de.repair_cost_low_inr)} – ${fmt.inr(de.repair_cost_high_inr)} —
        cost is linear in depth, and depth is estimated.</div>` : "";
 
@@ -593,10 +593,12 @@ function render(d, ms) {
 
       <div class="rule" style="margin:14px 0"></div>
 
-      <div class="kv"><span>MoRTH tonnage</span><span>${fmt.num(top.morth_tonnage_t, 4)} t</span></div>
-      <div class="kv"><span>Repair cost</span><span>${fmt.inr(top.repair_cost_inr)}${top.needs_manual_survey
-          ? ' <span class="badge warn">survey basis</span>'
-          : ""}</span></div>
+      <div class="kv"><span>MoRTH tonnage</span><span>${top.needs_manual_survey
+          ? '<span class="badge warn">survey required</span>'
+          : `${fmt.num(top.morth_tonnage_t, 4)} t`}</span></div>
+      <div class="kv"><span>Repair cost</span><span>${top.needs_manual_survey
+          ? '<span class="badge warn">survey basis (₹0 committed)</span>'
+          : fmt.inr(top.repair_cost_inr)}</span></div>
       <div class="kv"><span>Distance from camera</span><span>${fmt.num(top.distance_meters, 1)} m</span></div>
       <div class="kv"><span>PCI (this frame)</span><span>${pci.pci_score ?? "—"} · ${pci.rating_category || ""}</span></div>
       ${pci.backend ? `<div class="kv"><span>PCI regressor</span><span style="font-size:11px">${pci.backend}</span></div>` : ""}

@@ -465,6 +465,15 @@ def _finish_segmentation(flat, p0, crack_p, pothole_p, orig_h, orig_w, object_ma
                 c_mask, boxes = _connected_components_8(closed_cavity > 0, min_blob_px=min_px_map[cls_val])
             except Exception:
                 c_mask, boxes = _connected_components_8(binary_raw, min_blob_px=min_px_map[cls_val])
+        elif cls_val == 1 and binary_raw.any():
+            try:
+                import cv2
+                crack_u8 = binary_raw.astype(np.uint8)
+                kernel_crack = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+                closed_crack = cv2.morphologyEx(crack_u8, cv2.MORPH_CLOSE, kernel_crack)
+                c_mask, boxes = _connected_components_8(closed_crack > 0, min_blob_px=min_px_map[cls_val])
+            except Exception:
+                c_mask, boxes = _connected_components_8(binary_raw, min_blob_px=min_px_map[cls_val])
         else:
             c_mask, boxes = _connected_components_8(binary_raw, min_blob_px=min_px_map[cls_val])
         sorted_boxes = sorted(boxes, key=lambda b: b["area_work_px"], reverse=True)[:32]
@@ -482,7 +491,12 @@ def _finish_segmentation(flat, p0, crack_p, pothole_p, orig_h, orig_w, object_ma
             sub_mask = c_mask[wy:wy + wh, wx:wx + ww]
             if not sub_mask.any():
                 continue
-            sub_conf = float(conf_map[wy:wy + wh, wx:wx + ww][sub_mask].mean())
+            if cls_val == 1:
+                active_vals = conf_map[wy:wy + wh, wx:wx + ww][sub_mask]
+                active_crack = active_vals[active_vals >= t_crack * 0.85]
+                sub_conf = float(active_crack.mean()) if active_crack.size >= 12 else float(active_vals.mean())
+            else:
+                sub_conf = float(conf_map[wy:wy + wh, wx:wx + ww][sub_mask].mean())
             if sub_conf < min_conf_map[cls_val]:
                 continue
             if cls_val == 2:
@@ -1588,21 +1602,27 @@ def audit_image_base64(
 
         de = _photometric_depth(gray, [bx, by, bw, bh], cls_id, mask=region_bool if has_dense_mask else None, distance_m=dist_m)
         depth_cm = de["depth_cm"]
-        tonnage_t = round(area_m2 * (depth_cm / 100.0) * 2.40 * 1.15, 4)
-        cost_inr = round(tonnage_t * 7500.0, 2)
-        de["repair_cost_low_inr"] = round(area_m2 * (de["depth_low_cm"] / 100.0) * 2.40 * 1.15 * 7500.0, 2)
-        de["repair_cost_high_inr"] = round(area_m2 * (de["depth_high_cm"] / 100.0) * 2.40 * 1.15 * 7500.0, 2)
-
         box_share = (bw * bh) / float(W * H)
         is_closeup = bool(
             dist_m <= 4.2
             or (by + bh >= int(0.70 * H) and bh >= int(0.20 * H))
             or box_share >= 0.25
         )
-        effective_max_frac = 0.68 if is_closeup else 0.35
+        effective_max_frac = 0.35
         if is_closeup and cls_id == 2:
             area_m2 = round(float(min(1.85, max(0.08, area_m2))), 4)
         needs_survey = bool(area_m2 > 2.0 or box_share > effective_max_frac)
+
+        if not needs_survey:
+            tonnage_t = round(area_m2 * (depth_cm / 100.0) * 2.40 * 1.15, 4)
+            cost_inr = round(tonnage_t * 7500.0, 2)
+            de["repair_cost_low_inr"] = round(area_m2 * (de["depth_low_cm"] / 100.0) * 2.40 * 1.15 * 7500.0, 2)
+            de["repair_cost_high_inr"] = round(area_m2 * (de["depth_high_cm"] / 100.0) * 2.40 * 1.15 * 7500.0, 2)
+        else:
+            tonnage_t = 0.0
+            cost_inr = 0.0
+            de["repair_cost_low_inr"] = 0.0
+            de["repair_cost_high_inr"] = 0.0
         detections.append({
             "bbox_pixels": [bx, by, bw, bh],
             "bbox_normalized": [round(bx / W, 4), round(by / H, 4), round(bw / W, 4), round(bh / H, 4)],
@@ -1729,15 +1749,21 @@ def audit_image_base64(
                     or (mb[1] + mb[3] >= int(0.70 * H) and mb[3] >= int(0.20 * H))
                     or mb_frac >= 0.25
                 )
-                effective_max_frac = 0.68 if is_closeup else 0.35
+                effective_max_frac = 0.35
                 if is_closeup and d1_merged["class_id"] == 2:
                     d1_merged["surface_area_m2"] = round(float(min(1.85, max(0.08, d1_merged["surface_area_m2"]))), 4)
                 area_plausible = (d1_merged["surface_area_m2"] <= 2.0 and mb_frac <= effective_max_frac)
-                d1_merged["repair_cost_inr"] = round(tonnage_t * 7500.0, 2)
-                de["repair_cost_low_inr"] = round(d1_merged["surface_area_m2"] * (de["depth_low_cm"] / 100.0) * 2.40 * 1.15 * 7500.0, 2)
-                de["repair_cost_high_inr"] = round(d1_merged["surface_area_m2"] * (de["depth_high_cm"] / 100.0) * 2.40 * 1.15 * 7500.0, 2)
-                if not area_plausible:
+                if area_plausible:
+                    d1_merged["needs_manual_survey"] = False
+                    d1_merged["repair_cost_inr"] = round(tonnage_t * 7500.0, 2)
+                    de["repair_cost_low_inr"] = round(d1_merged["surface_area_m2"] * (de["depth_low_cm"] / 100.0) * 2.40 * 1.15 * 7500.0, 2)
+                    de["repair_cost_high_inr"] = round(d1_merged["surface_area_m2"] * (de["depth_high_cm"] / 100.0) * 2.40 * 1.15 * 7500.0, 2)
+                else:
                     d1_merged["needs_manual_survey"] = True
+                    d1_merged["morth_tonnage_t"] = 0.0
+                    d1_merged["repair_cost_inr"] = 0.0
+                    de["repair_cost_low_inr"] = 0.0
+                    de["repair_cost_high_inr"] = 0.0
                     d1_merged["area_diagnostics"] = dict(d1_merged.get("area_diagnostics") or {})
                     d1_merged["area_diagnostics"].update({
                         "implausible_for_a_single_repair": True,
@@ -1747,8 +1773,7 @@ def audit_image_base64(
                         "why": "Defect footprint exceeds single-patch limit; flagged for survey inspection.",
                         "action": "Reported for manual survey."
                     })
-                else:
-                    d1_merged["needs_manual_survey"] = False
+                d1_merged["depth_estimate"] = de
                 new_dets.append(d1_merged)
             detections = new_dets
 
@@ -1831,11 +1856,19 @@ def audit_image_base64(
             sby = int(H * 0.08)
             sbw = int(W * 0.32)
             sbh = int(H * 0.35)
-        elif f_cid_v in (4, 5):
-            sbx = int(W * 0.12)
+        elif f_cid_v == 4:
+            if markings_res and markings_res.get("found") and markings_res.get("bbox_pixels"):
+                sbx, sby, sbw, sbh = markings_res["bbox_pixels"]
+            else:
+                sbx = int(W * 0.18)
+                sby = int(H * 0.62)
+                sbw = int(W * 0.64)
+                sbh = int(H * 0.30)
+        elif f_cid_v == 5:
+            sbx = int(W * 0.42)
             sby = int(H * 0.52)
-            sbw = int(W * 0.76)
-            sbh = int(H * 0.38)
+            sbw = int(W * 0.16)
+            sbh = int(H * 0.42)
         else:
             sbx = int(W * 0.10)
             sby = int(H * 0.45)
@@ -2068,21 +2101,20 @@ def audit_image_base64(
     if pavement_age_yr is None:
         assumed_inputs["pavement_age_years"] = resolved_age
 
-    pinn_forecast = None
-    if primary_distress.get("is_distress"):
-        pinn_eng = PhysicsInformedHDM4Forecaster()
-        pinn_forecast = pinn_eng.forecast_trajectory(
-            init_area_m2=max(0.04, primary_distress.get("surface_area_m2", 0.0)),
-            depth_cm=max(2.0, primary_distress.get("depth_cm", 4.0)),
-            esal_trucks=resolved_esal,
-            rain_mm=resolved_rain,
-            pavement_age_yr=resolved_age,
-        )
-        pinn_forecast["environmental_parameters_source"] = (
-            "caller_supplied"
-            if not assumed_inputs
-            else "scene_derived_from_detected_traffic_pcu_and_moisture"
-        )
+    from models.pinn_deterioration import PhysicsInformedHDM4Forecaster
+    pinn_eng = PhysicsInformedHDM4Forecaster()
+    pinn_forecast = pinn_eng.forecast_trajectory(
+        init_area_m2=max(0.04, primary_distress.get("surface_area_m2", 0.0)),
+        depth_cm=max(2.0, primary_distress.get("depth_cm", 4.0)),
+        esal_trucks=resolved_esal,
+        rain_mm=resolved_rain,
+        pavement_age_yr=resolved_age,
+    )
+    pinn_forecast["environmental_parameters_source"] = (
+        "caller_supplied"
+        if not assumed_inputs
+        else "scene_derived_from_detected_traffic_pcu_and_moisture"
+    )
 
     # Advanced Model Stage 5: Forensic Vision-Language Report Generation
     from models.forensic_vlm_auditor import ForensicVLMAuditor
