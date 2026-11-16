@@ -58,13 +58,22 @@ def dhash(img_path, size=8):
     return int("".join("1" if b else "0" for b in bits), 2)
 
 
+N_BANDS, BAND_BITS = 8, 8
+BAND_MASK = (1 << BAND_BITS) - 1
+
+
 def hamming(a, b):
     return bin(a ^ b).count("1")
 
 
 def cluster_duplicates(hashes, max_dist=4):
     """Union-find over images whose dHash Hamming distance <= max_dist.
-    Four 16-bit bands guarantee any pair within distance 4 shares a band exactly."""
+
+    Pigeonhole: if two 64-bit hashes differ in at most d bits and the hash is cut into more than d
+    bands, at least one band is identical. Eight 8-bit bands therefore find every pair with
+    d <= 7. (The first version used four 16-bit bands, which only guarantees d <= 3, so pairs at
+    exactly 4 bits could be missed and the leakage check below caught two of them.)"""
+    assert max_dist < N_BANDS, "more bands are needed for this max_dist"
     keys = list(hashes)
     parent = {k: k for k in keys}
 
@@ -74,10 +83,10 @@ def cluster_duplicates(hashes, max_dist=4):
             x = parent[x]
         return x
 
-    for band in range(4):
+    for band in range(N_BANDS):
         buckets = {}
         for k in keys:
-            buckets.setdefault((hashes[k] >> (16 * band)) & 0xFFFF, []).append(k)
+            buckets.setdefault((hashes[k] >> (BAND_BITS * band)) & BAND_MASK, []).append(k)
         for members in buckets.values():
             for i in range(len(members)):
                 for j in range(i + 1, len(members)):
