@@ -1,6 +1,6 @@
 # Annotated sample images (5)
 
-Boxes for potholes (incl. water-filled, multiple per image), cars, a person and a zebra crossing.
+Boxes for potholes (incl. water-filled, 30 of them across 4 images; 27 on the many-potholes road, the farthest only 3-5 px tall so accurate to a few pixels), cars, a person and a zebra crossing.
 
 | Folder | Contents |
 |---|---|
@@ -21,7 +21,7 @@ Boxes for potholes (incl. water-filled, multiple per image), cars, a person and 
 
 | Class | Reference boxes | Found | False boxes |
 |---|---|---|---|
-| pothole | 13 | 0 | 0 |
+| pothole | 30 | 0 | 0 |
 | car | 10 | 10 | 0 |
 | person | 1 | 1 | 0 |
 | zebra_crossing | 1 | 0 | 1 |
