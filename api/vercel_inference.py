@@ -2128,7 +2128,7 @@ def audit_image_base64(
         }
 
     if surface_analysis.get("code") == "unpaved_rural_earthen_dirt":
-        distress_dets = [d for d in detections if d.get("is_distress")]
+        distress_dets = [d for d in detections if d.get("is_distress") and not d.get("needs_manual_survey")]  # defects the plausibility guard sent to survey stay unpriced
         distress_count = len(distress_dets)
         total_distress_area = sum(float(d.get("surface_area_m2", 0.0)) for d in distress_dets)
         section_m2 = max(35.0, round(total_distress_area * 14.0, 1))
