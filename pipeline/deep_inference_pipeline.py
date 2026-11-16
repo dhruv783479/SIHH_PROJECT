@@ -1212,6 +1212,26 @@ class DeepInferencePipeline:
                                 "segmentation", round(mean_p, 4),
                                 round(r_area / frame_px, 5), oversized])
         f_cls_cur = getattr(self, "_frame_cls", None) or {}
+        if not any(b[5] == 1 for b in out) and f_cls_cur.get("class_id") == 1 and float(f_cls_cur.get("confidence", 0.0)) >= 0.70:
+            pm1 = proba.get(1)
+            if pm1 is not None and pm1.size > 0:
+                ry0 = int(mh * 0.35)
+                roi_pm1 = pm1[ry0:, :]
+                if roi_pm1.size > 0 and float(roi_pm1.max()) >= 0.28:
+                    bin_crack = (roi_pm1 >= 0.28).astype(_np.uint8)
+                    close_k = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 7))
+                    bin_crack = cv2.morphologyEx(bin_crack, cv2.MORPH_CLOSE, close_k)
+                    n_c, lab_c, st_c, _ = cv2.connectedComponentsWithStats(bin_crack, 8)
+                    for ic in range(1, n_c):
+                        ca = int(st_c[ic, cv2.CC_STAT_AREA])
+                        if ca >= 35:
+                            c_x = int(st_c[ic, cv2.CC_STAT_LEFT] * sx)
+                            c_y = int((st_c[ic, cv2.CC_STAT_TOP] + ry0) * sy)
+                            c_w = int(st_c[ic, cv2.CC_STAT_WIDTH] * sx)
+                            c_h = int(st_c[ic, cv2.CC_STAT_HEIGHT] * sy)
+                            if c_w >= 18 and c_h >= 18:
+                                out.append([c_x, c_y, c_w, c_h, float(roi_pm1.max()) * ca, 1,
+                                            "segmentation", round(float(roi_pm1.max()), 4), round(ca / frame_px, 5), False])
         if not any(b[5] == 2 for b in out) and f_cls_cur.get("class_id") == 2 and float(f_cls_cur.get("confidence", 0.0)) >= 0.85:
             pm2 = proba.get(2)
             if pm2 is not None and pm2.size > 0:
@@ -1764,6 +1784,11 @@ class DeepInferencePipeline:
             bh = int(H * 0.35)
         elif cls_id == 4:
             m = getattr(self, "_markings", None) or {}
+            # Civil Road Engineering (IRC:35 & MoRTH Road Safety Audit):
+            # An intact zebra crossing with verified geometric stripes is COMPLIANT INFRASTRUCTURE.
+            # It is NOT a "Missing Zebra Crossing" safety hazard.
+            if m.get("found") and m.get("is_crossing") and m.get("stripe_count", 0) >= 3:
+                return None
             if m.get("found") and m.get("bbox_pixels"):
                 bx, by, bw, bh = m["bbox_pixels"]
             else:

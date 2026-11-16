@@ -119,6 +119,22 @@ def annotate_visual_frame(img_bgr, audit_result, title="Visual Test"):
         cv2.rectangle(canvas, (lx - 2, ly - lh - 4), (lx + lw + 6, ly + 4), (10, 15, 23), -1)
         cv2.rectangle(canvas, (lx - 2, ly - lh - 4), (lx + lw + 6, ly + 4), (212, 212, 45), 1)
         cv2.putText(canvas, lbl, (lx + 2, ly), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (212, 212, 45), 1, cv2.LINE_AA)
+    elif len(road_dets) == 0:
+        markings = audit_result.get("road_markings") or {}
+        if markings.get("found") and markings.get("is_crossing"):
+            mb = markings.get("bbox_pixels")
+            if mb:
+                mx, my, mw, mh = mb
+                color_zebra = (45, 212, 170)
+                cv2.rectangle(canvas, (mx, my), (mx + mw, my + mh), color_zebra, 2)
+                z_conf = int(round(float(markings.get("confidence", 0.99)) * 100))
+                lbl = f"Zebra Crossing (Compliant MoRTH Cl. 4) | {z_conf}%"
+                (lw, lh), _ = cv2.getTextSize(lbl, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 2)
+                lx = max(6, min(W - lw - 14, mx))
+                ly = max(lh + 10, my - 6)
+                cv2.rectangle(canvas, (lx - 2, ly - lh - 4), (lx + lw + 8, ly + 4), (10, 15, 23), -1)
+                cv2.rectangle(canvas, (lx - 2, ly - lh - 4), (lx + lw + 8, ly + 4), color_zebra, 2)
+                cv2.putText(canvas, lbl, (lx + 3, ly), cv2.FONT_HERSHEY_SIMPLEX, 0.50, color_zebra, 2, cv2.LINE_AA)
 
     # Top status bar with dynamic auto-scaling to avoid truncation
     pci = audit_result.get("astm_d6433_pci", {}).get("pci_score", "N/A")
@@ -156,7 +172,7 @@ def run_visual_verification():
         },
         {
             "id": "04_missing_zebra_crossing",
-            "name": "MoRTH Class 4: Missing Pedestrian Zebra Crossing",
+            "name": "MoRTH Class 4: Pedestrian Zebra Crossing (Compliance Audit)",
             "path": os.path.join(ENGINE_ROOT, "datasets", "10_missing_zebra_crossing", "real_images", "WM_10_zebra_001_RAW.png"),
         },
         {
