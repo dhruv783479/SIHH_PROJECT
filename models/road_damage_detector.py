@@ -104,7 +104,7 @@ class RoadDamageDetector(ONNXObjectDetector):
             if bw < 4 or bh < 4:
                 continue
             raw_score = float(conf[idx])
-            cal_score = min(0.98, round(0.48 + raw_score * 1.85, 4))
+            cal_score = round(raw_score, 4)  # raw detector score; no invented calibration
             out.append({
                 "bbox_pixels": [int(round(x1)), int(round(y1)), int(round(bw)), int(round(bh))],
                 "bbox_normalized": [

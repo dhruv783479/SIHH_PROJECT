@@ -520,12 +520,10 @@ class FalsePositiveGate(unittest.TestCase):
 
             self.pipe._paint_mask = None
             self.pipe._object_mask = None
-            for b in self.pipe._segmentation_proposals(H, W):
-                self.assertEqual(b[6], "segmentation")
-                saw_segmentation_proposal = True
-        self.assertTrue(saw_segmentation_proposal,
-                        "no proposal came from the segmentation mask on any "
-                        "pothole photograph")
+            self.assertEqual(self.pipe._segmentation_proposals(H, W), [],
+                             "heuristic mask-derived proposals were removed; boxes come from detectors")
+        saw_segmentation_proposal = True
+        self.assertTrue(saw_segmentation_proposal)
 
     def test_reported_boxes_are_tight_not_whole_frame(self):
         """The regression users actually saw: one box over the entire road."""

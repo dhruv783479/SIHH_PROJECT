@@ -592,14 +592,12 @@ class TestPhotoPipelineSevenClassesAndParity(unittest.TestCase):
                 continue
         cls.pipe = shared() if shared else DeepInferencePipeline(CKPT)
 
-    def test_photo_pipeline_dan_dag_embedder_and_5_advanced_models_ready(self):
+    def test_photo_pipeline_dan_dag_embedder_ready_and_fake_modules_removed(self):
         self.assertIsNotNone(self.pipe.dan_dag_net)
         self.assertTrue(self.pipe.dan_dag_net.is_ready)
         self.assertIsNotNone(self.pipe.dan_dag_net.embedder)
         for attr in ("surface_classifier", "metric_3d_engine", "vimu_fusion_engine", "pinn_forecaster", "forensic_vlm_auditor"):
-            mod = getattr(self.pipe, attr, None)
-            self.assertIsNotNone(mod, f"{attr} missing on DeepInferencePipeline")
-            self.assertTrue(getattr(mod, "is_ready", False), f"{attr}.is_ready must be True")
+            self.assertFalse(hasattr(self.pipe, attr), f"{attr} was removed (circular labels / formula ground truth)")
 
     def test_photo_pipeline_local_and_vercel_parity_on_pothole_and_roadside_sign(self):
         import base64
@@ -613,15 +611,18 @@ class TestPhotoPipelineSevenClassesAndParity(unittest.TestCase):
         with open(photo, "rb") as fh:
             b64 = base64.b64encode(fh.read()).decode("ascii")
         ver_res = vercel_inference.audit_image_base64(b64)
-        self.assertEqual(loc_res["status"], "ANALYSIS_COMPLETE")
-        self.assertEqual(ver_res["status"], "ANALYSIS_COMPLETE")
-        self.assertIn("surface_material", loc_res)
-        self.assertIn("forensic_vlm_audit", loc_res)
-        self.assertIn("surface_material", ver_res)
-        self.assertIn("forensic_vlm_audit", ver_res)
-        for key in ("surface_material", "metric_3d_depth", "vimu_temporal_fusion", "pinn_hdm4_forecast", "forensic_vlm_audit"):
-            self.assertTrue((loc_res.get(key) or {}).get("trained_checkpoint_loaded"), f"Local {key} must have trained_checkpoint_loaded=True")
-            self.assertTrue((ver_res.get(key) or {}).get("trained_checkpoint_loaded"), f"Vercel {key} must have trained_checkpoint_loaded=True")
+        # Detector-only boxes: a photo the shipped RDD2022 weights do not fire on is reported
+        # as a normal road. That is the honest outcome until the detector is retrained on
+        # pothole data (training/train_detectors_real.py); it is not papered over by heuristics.
+        ok = ("ANALYSIS_COMPLETE", "ROAD_INSPECTION_NORMAL")
+        self.assertIn(loc_res["status"], ok)
+        self.assertIn(ver_res["status"], ok)
+        for key in ("metric_3d_depth", "vimu_temporal_fusion", "pinn_hdm4_forecast", "forensic_vlm_audit"):
+            for res in (loc_res, ver_res):
+                self.assertEqual((res.get(key) or {}).get("status"), "not_modelled", f"{key} must not carry invented numbers")
+        self.assertFalse((ver_res.get("vimu_temporal_fusion") or {}).get("is_physically_verified"))
+        self.assertIn("crosswalk_boxes", loc_res)
+        self.assertIn("crosswalk_boxes", ver_res)
 
         sign_files = sorted(glob.glob(os.path.join(ENGINE_ROOT, "datasets", "12_damaged_traffic_signs", "**", "real_02_*.jpg"), recursive=True))
         if sign_files:
@@ -649,37 +650,17 @@ class TestPhotoPipelineSevenClassesAndParity(unittest.TestCase):
             self.assertIn("distance_m", det)
             self.assertIn("ttc_seconds", det)
 
-    def test_advanced_5_models_feature_parity_and_honesty(self):
-        """Verifies all 5 advanced models execute without silent dimension-mismatch exceptions."""
-        from models.surface_classifier import SurfaceTypeClassifier
-        from models.metric_3d_depth import Metric3DDepthEngine
-        from models.vimu_temporal_fusion import VIMUTemporalFusionEngine
-        from models.pinn_deterioration import PhysicsInformedHDM4Forecaster
-
-        sc = SurfaceTypeClassifier()
-        self.assertIsNotNone(sc._trained_model)
-        probs = sc._trained_model.predict_proba(np.zeros((1, 8), dtype=np.float32))
-        self.assertEqual(probs.shape[0], 1)
-
-        m3d = Metric3DDepthEngine()
-        self.assertIsNotNone(m3d._trained_regressor)
-        d_pred = float(m3d._trained_regressor.predict(np.array([[0.35, 0.22, 0.25, 0.04, 1.0]], dtype=np.float32))[0])
-        self.assertGreater(d_pred, 0.5)
-
-        vimu = VIMUTemporalFusionEngine()
-        self.assertIsNotNone(vimu._trained_classifier)
-        no_imu = vimu.fuse_detection({"class_id": 2, "confidence": 0.9, "distance_meters": 3.0, "depth_cm": 5.0}, imu_series=None)
-        self.assertFalse(no_imu["imu_sensor_attached"])
-        self.assertFalse(no_imu["imu_corroborated"])
-
-        pinn = PhysicsInformedHDM4Forecaster()
-        self.assertIsNotNone(pinn._trained_regressor)
-        k_pred = float(pinn._trained_regressor.predict(np.array([[2.5, 1.2, 3.8, 0.45, 4.0]], dtype=np.float32))[0])
-        self.assertGreater(k_pred, 0.0005)
-        self.assertLess(k_pred, 0.020)
-        k_low = pinn.compute_daily_breakout_velocity(50000.0, 200.0, 0.2, pavement_age_yr=1.5)
-        k_high = pinn.compute_daily_breakout_velocity(450000.0, 1800.0, 1.2, pavement_age_yr=9.0)
-        self.assertGreater(k_high, k_low, "Higher traffic ESAL and monsoon rain must increase breakout rate without ceiling saturation")
+    def test_every_reported_box_comes_from_a_trained_detector(self):
+        """No colour/mask/salience proposer may create a box; boxes are detector boxes only."""
+        self.assertEqual(self.pipe._segmentation_proposals(480, 640), [])
+        photo = sample_photo()
+        if not photo:
+            self.skipTest("no dataset photo available")
+        res = self.pipe.audit_image(photo)
+        det_boxes = {tuple(d["bbox_pixels"]) for d in res.get("road_damage_boxes", [])}
+        for d in res.get("all_detections", []):
+            if d.get("is_distress") and d.get("bbox_pixels") and d.get("source") == "rdd_yolo":
+                self.assertIn(tuple(d["bbox_pixels"]), det_boxes)
 
 
 if __name__ == "__main__":
