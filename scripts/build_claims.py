@@ -199,8 +199,8 @@ AUDIT_CORRECTIONS = [
      "Their labels or targets were produced by the same heuristics or formulas they were scored against "
      "(SurfaceTypeNet labels = its own scoring rule, Metric3D 'ground truth' depth = a darkness/gradient formula, "
      "V-IMU pairs unrelated IMU windows by index, PINN targets = 0.65*closed-form + 0.35*synthesised observation, "
-     "Forensic VLM = f-string templates with hard-coded rates). They still run in this build, but their outputs "
-     "are unvalidated rules/templates, not trained-and-tested models. No figure from them is a measurement."),
+     "Forensic VLM = f-string templates with hard-coded rates). They are removed from the decision path of both "
+     "engines (local pipeline and Vercel) and their keys return status not_modelled. No figure from them is a measurement."),
     ("Heuristic box proposers (mask components, HSV water-pool, salience scan, fixed fallback box) give reliable boxes",
      "REVERSED",
      "They can produce ghost boxes at image corners and can suppress a second water-filled cavity; they are not a "
@@ -513,15 +513,15 @@ def _deep_extras(claims, rep):
                 "served": True,
             },
         ]
-        # Unvalidated (see CORRECTIONS): their labels/targets were the heuristics' own
+        # Removed from serving (see CORRECTIONS): their labels/targets were the heuristics' own
         # output or closed-form formulas, so the reported accuracies were circular. Kept as
         # entries so the history is visible, but nothing here is claimed as measured.
         for entry in adv_subsystems:
-            entry["served"] = True  # still runs in this build; output is a rule/template, not a validated model
-            entry["measured"] = {"status": "NOT MEASURED - previously reported figures were circular and are withdrawn"}
-            entry["not_claimed"] = "Runs, but no accuracy is claimed. No non-circular ground truth exists for this module."
-            entry["evidence"] = "see corrections"
-            entry["name"] = "[UNVALIDATED] " + entry["name"]
+            entry["served"] = False
+            entry["measured"] = {"status": "REMOVED - previously reported figures were circular and are withdrawn"}
+            entry["not_claimed"] = "Not served. No non-circular ground truth exists for this module."
+            entry["evidence"] = "see corrections; code kept on disk only for audit"
+            entry["name"] = "[REMOVED] " + entry["name"]
         for entry in adv_subsystems:
             if entry["id"] in subs:
                 subs[entry["id"]].update(entry)

@@ -144,20 +144,7 @@ class DeepInferencePipeline:
             self.dan_dag_net = None
         self.dan_dag = self.dan_dag_net
 
-        from models.surface_classifier import SurfaceTypeClassifier
-        self.surface_classifier = SurfaceTypeClassifier()
-
-        from models.metric_3d_depth import Metric3DDepthEngine
-        self.metric_3d_engine = Metric3DDepthEngine()
-
-        from models.vimu_temporal_fusion import VIMUTemporalFusionEngine
-        self.vimu_fusion_engine = VIMUTemporalFusionEngine()
-
-        from models.pinn_deterioration import PhysicsInformedHDM4Forecaster
-        self.pinn_forecaster = PhysicsInformedHDM4Forecaster()
-
-        from models.forensic_vlm_auditor import ForensicVLMAuditor
-        self.forensic_vlm_auditor = ForensicVLMAuditor()
+        # SurfaceTypeNet / Metric3D / V-IMU / PINN / Forensic-VLM are no longer loaded (see _audit_core).
 
     def audit_image(self, image_input, corridor_id="NH-44", latitude=None, longitude=None, **kwargs):
         """
@@ -380,7 +367,7 @@ class DeepInferencePipeline:
         self._damage = (damage_boxes, damage_summary)
 
         # Stage: Pavement Material & Domain Classification (SurfaceTypeNet)
-        surface_analysis = self.surface_classifier.analyze_surface(img_np, roi_top_fraction=self.ROAD_ROI_TOP_FRACTION)
+        surface_analysis = {"status": "not_modelled", "code": "paved_unverified"}
         self._surface_code = surface_analysis.get("code")
 
         frame_cls = self._frame_classification(img_np)
@@ -713,95 +700,21 @@ class DeepInferencePipeline:
         )
         dag_exec.mark("N7_astm_pci_hd4")
 
-        # Stage: Pavement Material & Domain Classification (SurfaceTypeNet)
-        surface_analysis = self.surface_classifier.analyze_surface(img_np, roi_top_fraction=self.ROAD_ROI_TOP_FRACTION)
-
-        # Stage: Monocular Metric 3D Depth & Point-Cloud Integration
-        metric_3d_res = None
-        if primary_distress.get("bbox_pixels"):
-            mb = primary_distress["bbox_pixels"]
-            cls_id_pd = primary_distress.get("class_id", 2)
-            metric_3d_res = self.metric_3d_engine.evaluate_cavity_3d(gray, mb, class_id=cls_id_pd)
-            primary_distress["metric_3d_point_cloud"] = metric_3d_res["point_cloud_3d"]
-            primary_distress["volumetric_m3"] = metric_3d_res["volume_m3"]
-            primary_distress["automotive_chassis_hazard"] = metric_3d_res["automotive_hazard"]
-            primary_distress["astm_d6433_severity"] = metric_3d_res["astm_d6433_severity"]
-        else:
-            metric_3d_res = {
-                "depth_cm": 0.0,
-                "max_metric_depth_cm": 0.0,
-                "depth_low_cm": 0.0,
-                "depth_high_cm": 0.0,
-                "surface_area_m2": 0.0,
-                "volume_m3": 0.0,
-                "distance_meters": 0.0,
-                "point_cloud_3d": None,
-                "astm_d6433_severity": "NONE",
-                "automotive_hazard": None,
-                "morth_tonnage_t": 0.0,
-                "repair_cost_inr": 0.0,
-                "trained_checkpoint_loaded": bool(getattr(self.metric_3d_engine, "_trained_regressor", None) is not None),
-                "measurement_basis": "No localized pavement cavity detected in current frame",
-            }
-
-        if surface_analysis.get("code") == "unpaved_rural_earthen_dirt":
-            distress_dets = [d for d in detections if d.get("is_distress") and not d.get("needs_manual_survey")]  # defects the plausibility guard sent to survey stay unpriced
-            distress_count = len(distress_dets)
-            total_distress_area = sum(float(d.get("surface_area_m2", 0.0)) for d in distress_dets)
-            section_m2 = max(35.0, round(total_distress_area * 14.0, 1))
-            base_gang_mob = float(surface_analysis.get("base_mobilization_cost_inr", 8500.0))
-            rate_per_m2 = float(surface_analysis.get("rural_grading_cost_per_m2", 220.0))
-            total_rural_cost = round(base_gang_mob + (section_m2 * rate_per_m2), 2)
-            per_defect_cost = round(total_rural_cost / max(1, distress_count), 2) if distress_count > 0 else 0.0
-            for d in distress_dets:
-                d["irc_standard_specification"] = "IRC:SP:72-2015 Cl. 6 / IRC:SP:20 Cl. 8: Motor-grader scarifying, subgrade camber reprofiling (4% crossfall), gravel wear course (75mm), and vibratory rolling"
-                d["repair_cost_inr"] = per_defect_cost
-                d["morth_tonnage_t"] = 0.0
-                d["needs_manual_survey"] = False
-                if "area_diagnostics" in d and isinstance(d["area_diagnostics"], dict):
-                    d["area_diagnostics"]["implausible_for_a_single_repair"] = False
-                    d["area_diagnostics"]["why"] = f"Rural unpaved earthen road: continuous camber reprofiling scheduled over {section_m2} m² section per PMGSY / IRC:SP:72."
-                    d["area_diagnostics"]["action"] = "Scheduled for motorized rural gang maintenance."
-                if "depth_estimate" in d and isinstance(d["depth_estimate"], dict):
-                    d["depth_estimate"]["repair_cost_low_inr"] = round(per_defect_cost * 0.85, 2)
-                    d["depth_estimate"]["repair_cost_high_inr"] = round(per_defect_cost * 1.35, 2)
-                if "physical_dimensions" in d and isinstance(d["physical_dimensions"], dict):
-                    d["physical_dimensions"]["morth_compacted_tonnage_t"] = 0.0
-                    d["physical_dimensions"]["estimated_repair_cost_inr"] = per_defect_cost
-
-        # Stage: Vision-IMU Cross-Modal Temporal Verification
-        vimu_fusion_res = self.vimu_fusion_engine.fuse_detection(
-            primary_distress, imu_series=imu_series, vehicle_speed_kmh=vehicle_speed_kmh
-        )
-
-        # Stage: Physics-Informed HDM-4 Lifecycle Trajectory
-        pinn_forecast = self.pinn_forecaster.forecast_trajectory(
-            init_area_m2=max(0.04, primary_distress.get("surface_area_m2", 0.0)),
-            depth_cm=max(2.0, primary_distress.get("depth_cm", 4.0)),
-            esal_trucks=traffic_esal,
-            rain_mm=rain_mm,
-            pavement_age_yr=pavement_age_yr,
-        )
+        # SurfaceTypeNet / Metric3D / V-IMU / PINN / Forensic VLM removed from the decision path:
+        # labels/targets were the heuristics' own output or closed-form formulas with hard-coded
+        # rates. Keys stay so consumers do not break, but carry no invented numbers.
+        _NM = {"status": "not_modelled",
+               "reason": "removed: no non-circular ground truth was available for this module"}
+        surface_analysis = {**_NM, "code": "paved_unverified"}
+        metric_3d_res = dict(_NM)
+        vimu_fusion_res = {**_NM, "is_physically_verified": False}
+        pinn_forecast = dict(_NM)
 
         total_tonnage = round(float(sum(d.get("morth_tonnage_t", 0.0) for d in detections)), 3)
         total_repair_inr = round(float(sum(d.get("repair_cost_inr", 0.0) for d in detections)), 2)
         dag_exec.mark("N8_irc_compliance")
 
-        # Stage: Forensic Vision-Language Report Generation
-        audit_state = {
-            "primary_distress": primary_distress,
-            "surface_material": surface_analysis,
-            "metric_3d": metric_3d_res or {},
-            "vimu_fusion": vimu_fusion_res,
-            "pinn_deterioration": pinn_forecast,
-            "morth_ledger": {
-                "total_bitumen_tonnage_t": total_tonnage,
-                "total_estimated_repair_inr": total_repair_inr,
-            },
-        }
-        forensic_vlm_report = self.forensic_vlm_auditor.generate_audit_report(
-            audit_state, corridor_id=corridor_id, chainage_km=chainage_km
-        )
+        forensic_vlm_report = dict(_NM)
 
         work_order = None
         if primary_distress.get("is_distress") and primary_distress.get("class_id") in AREA_CLASSES:
@@ -2141,7 +2054,7 @@ class DeepInferencePipeline:
         if pavement_age_yr is None:
             pavement_age_yr = self.DEFAULT_PAVEMENT_AGE_YR
         pci, rutting_mm, iri_roughness = self._compute_pci([], pavement_age_yr)
-        surface_analysis = self.surface_classifier.analyze_surface(img_np, roi_top_fraction=self.ROAD_ROI_TOP_FRACTION)
+        surface_analysis = {"status": "not_modelled", "code": "paved_unverified"}
         elapsed_ms = round((time.time() - t0) * 1000.0, 2)
         return {
             "status": "ROAD_INSPECTION_NORMAL",
@@ -2166,20 +2079,10 @@ class DeepInferencePipeline:
             "pavement_pci": pci["pci_score"],
             "pci_category": pci["rating_category"],
             "surface_material": surface_analysis,
-            "metric_3d_depth": None,
-            "vimu_temporal_fusion": {
-                "physical_verification_status": "NORMAL_ROAD_NO_DEFECT",
-                "is_physically_verified": True,
-                "trained_checkpoint_loaded": bool(getattr(self.vimu_fusion_engine, "_trained_classifier", None) is not None),
-                "audit_verdict": "Carriageway ride is smooth. No physical shock or visual defect detected.",
-            },
-            "pinn_hdm4_forecast": None,
-            "forensic_vlm_audit": {
-                "trained_checkpoint_loaded": bool(getattr(self.forensic_vlm_auditor, "_sor_rates", None) is not None),
-                "executive_narrative": f"CORRIDOR AUDIT SUMMARY ({corridor_id}): Pavement inspection confirms intact, sound pavement under IRC:82-2015.",
-                "contractor_dispute_brief": "Carriageway in good order; no actionable defects found.",
-                "morth_schedule_of_rates": {"line_items": [], "total_estimated_work_order_inr": 0.0},
-            },
+            "metric_3d_depth": {"status": "not_modelled"},
+            "vimu_temporal_fusion": {"status": "not_modelled", "is_physically_verified": False},
+            "pinn_hdm4_forecast": {"status": "not_modelled"},
+            "forensic_vlm_audit": {"status": "not_modelled"},
             "morth_civil_ledger": {"total_bitumen_tonnage_t": 0.0, "total_estimated_repair_inr": 0.0},
             "cryptographic_work_order": None,
             "corridor_id": corridor_id,

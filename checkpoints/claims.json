@@ -1,5 +1,5 @@
 {
-  "generated_unix": 1794866372,
+  "generated_unix": 1794871993,
   "principle": "Deep learning where perception is hard; deterministic mathematics where explainability and civil compliance are non-negotiable. Every entry below states what was measured, by which script, and what is NOT claimed.",
   "subsystems": [
     {
@@ -314,73 +314,73 @@
     },
     {
       "id": "M_SURF",
-      "name": "[UNVALIDATED] SurfaceTypeNet Pavement Domain & Material Classifier",
+      "name": "[REMOVED] SurfaceTypeNet Pavement Domain & Material Classifier",
       "architecture": "Multispectral colorimetry + texture gradient classifier, 8 features",
       "role": "Distinguishes asphalt, concrete, unpaved rural earthen track, and paver blocks (IRC:37/58/SP:72/SP:63)",
       "why": "Bitumen concrete patching is physically inapplicable to unpaved dirt roads; domain rules prevent invalid work orders.",
       "measured": {
-        "status": "NOT MEASURED - previously reported figures were circular and are withdrawn"
+        "status": "REMOVED - previously reported figures were circular and are withdrawn"
       },
-      "evidence": "see corrections",
+      "evidence": "see corrections; code kept on disk only for audit",
       "reproduce": "python -m training.train_advanced_5_suite",
-      "not_claimed": "Runs, but no accuracy is claimed. No non-circular ground truth exists for this module.",
-      "served": true
+      "not_claimed": "Not served. No non-circular ground truth exists for this module.",
+      "served": false
     },
     {
       "id": "M_METRIC3D",
-      "name": "[UNVALIDATED] Metric 3D Depth & Point-Cloud Engine",
+      "name": "[REMOVED] Metric 3D Depth & Point-Cloud Engine",
       "architecture": "Pinhole ground-plane projection + gradient boosted photometric cavity regressor, 5 features",
       "role": "Calculates physical metric depth (cm), excavation volume (m\u00b3), and 3D point cloud bounds",
       "why": "Flat 2D bounding boxes cannot estimate cavity depth or compute volumetric compaction tonnage.",
       "measured": {
-        "status": "NOT MEASURED - previously reported figures were circular and are withdrawn"
+        "status": "REMOVED - previously reported figures were circular and are withdrawn"
       },
-      "evidence": "see corrections",
+      "evidence": "see corrections; code kept on disk only for audit",
       "reproduce": "python -m training.train_advanced_5_suite",
-      "not_claimed": "Runs, but no accuracy is claimed. No non-circular ground truth exists for this module.",
-      "served": true
+      "not_claimed": "Not served. No non-circular ground truth exists for this module.",
+      "served": false
     },
     {
       "id": "M_VIMU",
-      "name": "[UNVALIDATED] Vision-IMU Cross-Modal Temporal Conformer",
+      "name": "[REMOVED] Vision-IMU Cross-Modal Temporal Conformer",
       "architecture": "Cross-modal arbitration classifier on 7 visual-telemetry features",
       "role": "Distinguishes genuine physical pavement cavities from optical stains, puddles, and shadows",
       "why": "Pure optical models can be deceived by dark shadows or water reflections; accelerometer corroboration provides proof.",
       "measured": {
-        "status": "NOT MEASURED - previously reported figures were circular and are withdrawn"
+        "status": "REMOVED - previously reported figures were circular and are withdrawn"
       },
-      "evidence": "see corrections",
+      "evidence": "see corrections; code kept on disk only for audit",
       "reproduce": "python -m training.train_advanced_5_suite",
-      "not_claimed": "Runs, but no accuracy is claimed. No non-circular ground truth exists for this module.",
-      "served": true
+      "not_claimed": "Not served. No non-circular ground truth exists for this module.",
+      "served": false
     },
     {
       "id": "M_PINN_HDM4",
-      "name": "[UNVALIDATED] Physics-Informed HDM-4 Deterioration Forecaster",
+      "name": "[REMOVED] Physics-Informed HDM-4 Deterioration Forecaster",
       "architecture": "PINN enforcing monotonic breakout and monsoon hydraulic pumping",
       "role": "Forecasts 30-to-365 day pavement defect growth and cost compounding (Day 180 budget escalation)",
       "why": "Road damage expansion accelerates exponentially during monsoons; deferred repair leads to budget blowouts.",
       "measured": {
-        "status": "NOT MEASURED - previously reported figures were circular and are withdrawn"
+        "status": "REMOVED - previously reported figures were circular and are withdrawn"
       },
-      "evidence": "see corrections",
+      "evidence": "see corrections; code kept on disk only for audit",
       "reproduce": "python -m training.train_advanced_5_suite",
-      "not_claimed": "Runs, but no accuracy is claimed. No non-circular ground truth exists for this module.",
-      "served": true
+      "not_claimed": "Not served. No non-circular ground truth exists for this module.",
+      "served": false
     },
     {
       "id": "M_VLM_LEGAL",
-      "name": "[UNVALIDATED] Forensic Vision-Language & MoRTH Legal Auditor",
+      "name": "[REMOVED] Forensic Vision-Language & MoRTH Legal Auditor",
       "architecture": "Multimodal legal brief synthesizer + MoRTH Schedule of Rates 2026",
       "role": "Generates executive narratives, contractor dispute briefs, and itemized MoRTH SOR bills of quantities",
       "why": "Municipal engineers need legally defensible repair orders and itemized BOQ for tender verification.",
       "measured": {
-        "status": "NOT MEASURED - previously reported figures were circular and are withdrawn"
+        "status": "REMOVED - previously reported figures were circular and are withdrawn"
       },
-      "evidence": "see corrections",
+      "evidence": "see corrections; code kept on disk only for audit",
       "reproduce": "python -m training.train_advanced_5_suite",
-      "not_claimed": "Runs, but no accuracy is claimed. No non-circular ground truth exists for this module.",
-      "served": true
+      "not_claimed": "Not served. No non-circular ground truth exists for this module.",
+      "served": false
     },
     {
       "id": "M_YOLO_VIDEO",
