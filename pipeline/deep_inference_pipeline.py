@@ -284,6 +284,7 @@ class DeepInferencePipeline:
 
         img_np = self.cv_detector.decode_image(image_input)
         H, W, _ = img_np.shape
+        self._current_img_np = img_np
         gray = 0.299 * img_np[:, :, 0] + 0.587 * img_np[:, :, 1] + 0.114 * img_np[:, :, 2]
 
         roi_start_y = int(H * 0.35)
@@ -419,7 +420,7 @@ class DeepInferencePipeline:
             obj_mask[max(0, oy - 8):min(H, oy + oh + 8), max(0, ox - 8):min(W, ox + ow + 8)] = True
         for obj in vehicle_detections:
             ox, oy, ow, oh = obj["bbox_pixels"]
-            oy1 = min(H, oy + oh + 4)
+            oy1 = min(H, oy + oh + max(18, int(oh * 0.18)))
             obj_mask[max(0, oy):min(H, oy1), max(0, ox - 6):min(W, ox + ow + 6)] = True
         self._object_mask = obj_mask if obj_mask.any() else None
 
@@ -477,7 +478,7 @@ class DeepInferencePipeline:
             if (by + bh * 0.5) < int(H * 0.22) and bw > int(W * 0.40) and d.get("area_method") != "segmentation_mask":
                 continue
             # Suppress lateral verge/gutter artifacts if valid carriageway distress exists
-            if d.get("class_id") == 1 and (bx <= 35 or bx + bw >= W - 35) and float(d.get("confidence", 0.0)) < 0.55:
+            if d.get("class_id") == 1 and (bx <= 35 or bx + bw >= W - 35) and float(d.get("confidence", 0.0)) < 0.60:
                 carriageway_cracks = [od for od in distress_dets if od.get("class_id") == 1 and od != d and od.get("bbox_pixels") and (od["bbox_pixels"][0] > 35 and od["bbox_pixels"][0] + od["bbox_pixels"][2] < W - 35)]
                 if carriageway_cracks:
                     continue
@@ -1212,7 +1213,14 @@ class DeepInferencePipeline:
                                 "segmentation", round(mean_p, 4),
                                 round(r_area / frame_px, 5), oversized])
         f_cls_cur = getattr(self, "_frame_cls", None) or {}
-        if not any(b[5] == 1 for b in out) and f_cls_cur.get("class_id") == 1 and float(f_cls_cur.get("confidence", 0.0)) >= 0.70:
+        has_carriageway_crack = any(
+            b[5] == 1
+            and b[0] > 35
+            and b[0] + b[2] < W - 35
+            and (b[2] * b[3]) >= int(0.015 * W * H)
+            for b in out
+        )
+        if not has_carriageway_crack and f_cls_cur.get("class_id") == 1 and float(f_cls_cur.get("confidence", 0.0)) >= 0.70:
             pm1 = proba.get(1)
             if pm1 is not None and pm1.size > 0:
                 ry0 = int(mh * 0.35)
@@ -1246,6 +1254,57 @@ class DeepInferencePipeline:
                     y0_p = max(int(H * self.ROAD_ROI_TOP_FRACTION), min(H - bh_p - 8, cy_p - bh_p // 2))
                     out.append([x0_p, y0_p, bw_p, bh_p, float(roi_pm.max()) * 200.0, 2,
                                 "segmentation", round(float(roi_pm.max()), 4), 0.02, False])
+
+        # Stage: Waterlogged Cavity Basin & Monsoonal Ponding Proposer
+        # Potholes filled with standing water reflect light/sky and have smooth interior texture,
+        # which suppresses dry pixel-classifier logits. We extract cohesive water basins in the carriageway.
+        has_substantial_pothole = any(b[5] == 2 and b[2] >= 120 and b[3] >= 45 for b in out)
+        is_water_relevant = (
+            f_cls_cur.get("class_id") in (2, 3)
+            or getattr(self, "_surface_code", None) == "unpaved_rural_earthen_dirt"
+        ) and (f_cls_cur.get("class_id") not in (0, 4, 5, 6))
+
+        if is_water_relevant and not has_substantial_pothole and hasattr(self, "_current_img_np") and self._current_img_np is not None:
+            curr_img = self._current_img_np
+            roi_y0_w = int(H * self.ROAD_ROI_TOP_FRACTION)
+            c_hsv = cv2.cvtColor(curr_img[roi_y0_w:, :], cv2.COLOR_RGB2HSV)
+            c_gray = cv2.cvtColor(curr_img[roi_y0_w:, :], cv2.COLOR_RGB2GRAY)
+            
+            b_mean = cv2.blur(c_gray.astype(float), (15, 15))
+            b_sq = cv2.blur((c_gray.astype(float)) ** 2, (15, 15))
+            loc_std = _np.sqrt(_np.maximum(0, b_sq - b_mean ** 2))
+
+            # 1) Muddy/turbid ponding reflection: Hue in yellow/brown range [10..38], Sat >= 20, Val >= 105, loc_std < 18.0
+            mask_muddy = (c_hsv[:, :, 0] >= 10) & (c_hsv[:, :, 0] <= 38) & (c_hsv[:, :, 1] >= 20) & (c_hsv[:, :, 2] >= 105) & (loc_std < 18.0)
+            # 2) Smooth specular water reflection: local std < 14 and Val > 95
+            mask_smooth = (loc_std < 14.0) & (c_gray > 95) & (c_hsv[:, :, 0] >= 8) & (c_hsv[:, :, 0] <= 45)
+            water_pool = mask_muddy | mask_smooth
+            
+            # Mask out vehicle exclusion zones so car body panels/wheels are never mistaken for water
+            obj_m = getattr(self, "_object_mask", None)
+            if obj_m is not None:
+                roi_obj = obj_m[roi_y0_w:, :]
+                if roi_obj.shape[:2] == water_pool.shape[:2]:
+                    water_pool[roi_obj] = 0
+
+            w_k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+            water_pool = cv2.morphologyEx(water_pool.astype(_np.uint8), cv2.MORPH_CLOSE, w_k)
+            w_cnts, _ = cv2.findContours(water_pool, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for wc in w_cnts:
+                w_area = cv2.contourArea(wc)
+                if w_area >= 1200:
+                    wbx, wby, wbw, wbh = cv2.boundingRect(wc)
+                    wby += roi_y0_w
+                    # Expand by 10-15% to enclose the excavated crater rim
+                    p_x = int(wbw * 0.12)
+                    p_y = int(wbh * 0.15)
+                    bx_c = max(10, wbx - p_x)
+                    by_c = max(roi_y0_w, wby - p_y)
+                    bw_c = min(W - bx_c - 10, wbw + 2 * p_x)
+                    bh_c = min(H - by_c - 10, wbh + 2 * p_y)
+                    if bw_c >= 40 and bh_c >= 30:
+                        out.append([bx_c, by_c, bw_c, bh_c, float(w_area), 2,
+                                    "segmentation", 0.85, round(w_area / frame_px, 5), False])
         out = self._merge_overlapping_potholes(out, W, H)
         out.sort(key=lambda b: -b[4])
         return out[: self.MAX_COMPONENTS]
@@ -1503,6 +1562,23 @@ class DeepInferencePipeline:
 
         if float(pred.get("confidence", 0.0)) < self.MIN_REPORT_CONFIDENCE:
             return None
+
+        # ASTM D6433 physical dimension floor: reject micro-slivers and sub-scale scuffs
+        if cls_id == 2:
+            min_pot_area = int(0.003 * W * H) if not is_unpaved else int(0.0015 * W * H)
+            if bw < 22 or bh < 18 or (bw * bh) < min_pot_area:
+                return None
+        elif cls_id == 1:
+            if bw < 14 and bh < 14:
+                return None
+
+        f_cls_cur = getattr(self, "_frame_cls", None) or {}
+        if cls_id == 2 and f_cls_cur.get("class_id") == 1 and float(f_cls_cur.get("confidence", 0.0)) >= 0.70:
+            if bw < 75 and bh < 75:
+                # Spalled chip inside fatigue crack network per ASTM D6433
+                cls_id = 1
+                pred["class_id"] = 1
+                pred["class_name"] = VisionDistressNet.CLASS_NAMES[1]
 
         # Suppress painted road markings (yellow center lines, white lane stripes)
         paint = getattr(self, "_paint_mask", None)

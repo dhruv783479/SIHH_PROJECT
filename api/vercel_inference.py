@@ -848,7 +848,7 @@ def _detect_scene_objects(img_np, H, W):
                 "detector": o.get("detector", "onnx_coco_detector"),
             })
 
-            oy1 = max(by, by + int(bh * 0.85))
+            oy1 = min(H, by + bh + max(18, int(bh * 0.18)))
             object_mask[max(0, by):min(H, oy1), max(0, bx - 6):min(W, bx + bw + 6)] = True
 
     pcu_total = round(sum(v["pcu_weight"] for v in vehicle_detections), 2)
@@ -1412,6 +1412,64 @@ def audit_image_base64(
                 "source": "salient_cavity_detector",
             })
 
+    from models.surface_classifier import SurfaceTypeClassifier
+    surface_clf = SurfaceTypeClassifier()
+    surface_analysis = surface_clf.analyze_surface(img_np, roi_top_fraction=0.38)
+    surface_code = surface_analysis.get("code")
+    is_unpaved = (surface_code == "unpaved_rural_earthen_dirt")
+
+    # Stage: Waterlogged Cavity Basin & Monsoonal Ponding Proposer
+    has_substantial_pothole = any(
+        (p.get("seg_comp") or {}).get("seg_cls") == 2
+        and p["bbox_pixels"][2] >= 120
+        and p["bbox_pixels"][3] >= 45
+        for p in proposals
+    )
+    is_water_relevant = (
+        frame_cls_raw.get("class_id") in (2, 3)
+        or is_unpaved
+    ) and (frame_cls_raw.get("class_id") not in (0, 4, 5, 6))
+
+    if is_water_relevant and not has_substantial_pothole:
+        try:
+            import cv2 as _cv2
+            roi_y0_w = int(H * 0.38)
+            c_hsv = _cv2.cvtColor(img_np[roi_y0_w:, :], _cv2.COLOR_RGB2HSV)
+            c_gray = _cv2.cvtColor(img_np[roi_y0_w:, :], _cv2.COLOR_RGB2GRAY)
+            b_mean = _cv2.blur(c_gray.astype(float), (15, 15))
+            b_sq = _cv2.blur((c_gray.astype(float)) ** 2, (15, 15))
+            loc_std = np.sqrt(np.maximum(0, b_sq - b_mean ** 2))
+            mask_muddy = (c_hsv[:, :, 0] >= 10) & (c_hsv[:, :, 0] <= 38) & (c_hsv[:, :, 1] >= 20) & (c_hsv[:, :, 2] >= 105) & (loc_std < 18.0)
+            mask_smooth = (loc_std < 14.0) & (c_gray > 95) & (c_hsv[:, :, 0] >= 8) & (c_hsv[:, :, 0] <= 45)
+            water_pool = mask_muddy | mask_smooth
+            if object_mask is not None:
+                roi_obj = object_mask[roi_y0_w:, :]
+                if roi_obj.shape[:2] == water_pool.shape[:2]:
+                    water_pool[roi_obj] = 0
+            w_k = _cv2.getStructuringElement(_cv2.MORPH_ELLIPSE, (15, 15))
+            water_pool = _cv2.morphologyEx(water_pool.astype(np.uint8), _cv2.MORPH_CLOSE, w_k)
+            w_cnts, _ = _cv2.findContours(water_pool, _cv2.RETR_EXTERNAL, _cv2.CHAIN_APPROX_SIMPLE)
+            for wc in w_cnts:
+                w_area = _cv2.contourArea(wc)
+                if w_area >= 1200:
+                    wbx, wby, wbw, wbh = _cv2.boundingRect(wc)
+                    wby += roi_y0_w
+                    p_x = int(wbw * 0.12)
+                    p_y = int(wbh * 0.15)
+                    bx_c = max(10, wbx - p_x)
+                    by_c = max(roi_y0_w, wby - p_y)
+                    bw_c = min(W - bx_c - 10, wbw + 2 * p_x)
+                    bh_c = min(H - by_c - 10, wbh + 2 * p_y)
+                    if bw_c >= 40 and bh_c >= 30:
+                        if not any(_box_iou([bx_c, by_c, bw_c, bh_c], p["bbox_pixels"]) > 0.45 for p in proposals):
+                            proposals.append({
+                                "bbox_pixels": [bx_c, by_c, bw_c, bh_c],
+                                "seg_comp": {"seg_cls": 2, "mean_p": 0.85},
+                                "source": "waterlogged_cavity_proposer",
+                            })
+        except Exception:
+            pass
+
     if not proposals and frame_cls_raw.get("class_id") in (1, 2) and float(frame_cls_raw.get("confidence", 0.0)) >= 0.85:
         bw_fb, bh_fb = int(W * 0.38), int(H * 0.34)
         bx_fb, by_fb = int(W * 0.31), int(H * 0.50)
@@ -1566,6 +1624,21 @@ def audit_image_base64(
             continue
         if float(cls_info.get("confidence", 0.0)) < MIN_REPORT_CONFIDENCE:
             continue
+
+        if cls_id == 2 and frame_cls_raw.get("class_id") == 1 and float(frame_cls_raw.get("confidence", 0.0)) >= 0.70:
+            if bw < 75 and bh < 75:
+                cls_id = 1
+                cls_info["class_id"] = 1
+                cls_info["class_name"] = CLASS_NAMES[1]
+
+        # ASTM D6433 physical dimension floor: reject micro-slivers and sub-scale scuffs
+        if cls_id == 2:
+            min_pot_area = int(0.003 * W * H) if not is_unpaved else int(0.0015 * W * H)
+            if bw < 22 or bh < 18 or (bw * bh) < min_pot_area:
+                continue
+        elif cls_id == 1:
+            if bw < 14 and bh < 14:
+                continue
 
         cls_name = CLASS_NAMES[cls_id]
         conf = float(cls_info["confidence"])
