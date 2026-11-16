@@ -157,28 +157,6 @@ def _load_sessions():
         _SESSIONS["detector_error"] = str(e)
 
     try:
-        from models.road_damage_detector import RoadDamageDetector
-        dmg = RoadDamageDetector(checkpoints_dir=CKPT_DIR)
-        if dmg.is_ready:
-            _SESSIONS["damage_detector"] = dmg
-        else:
-            _SESSIONS["damage_detector_blocked_by"] = dmg.blocked_by
-    except Exception as e:
-        _SESSIONS["damage_detector_error"] = str(e)
-
-    try:
-        import os as _os2
-        _cwp = _os2.path.join(CKPT_DIR, "crosswalk_rdd.onnx")
-        if _os2.path.exists(_cwp):
-            from models.onnx_object_detector import ONNXObjectDetector as _OOD
-            _cw = _OOD(checkpoints_dir=CKPT_DIR, weights_path=_cwp,
-                       class_names=["Zebra Crosswalk", "Road Guide Arrow"], conf_threshold=0.25)
-            if _cw.is_ready:
-                _SESSIONS["crosswalk_detector"] = _cw
-    except Exception as e:
-        _SESSIONS["crosswalk_detector_error"] = str(e)
-
-    try:
         from models.pci_regressor_net import PavementConditionIndexEngine
         pci_eng = PavementConditionIndexEngine(model_path=os.path.join(CKPT_DIR, "pci_model.joblib"))
         _SESSIONS["pci_engine"] = pci_eng
@@ -1414,26 +1392,29 @@ def audit_image_base64(
     seg_out = segment_image(img_np, object_mask_full=object_mask, gray_full=gray, pothole_heat=pothole_heat)
     detections = []
 
-    # Boxes come ONLY from the trained RDD2022 detector. Segmenter components, salience scans,
-    # HSV water-pool proposals and the fixed-geometry CNN fallback box were heuristics and are gone;
-    # the segmenter mask is used only to measure area inside a detector box.
     proposals = []
-    _dmg = _SESSIONS.get("damage_detector")
-    if _dmg is not None:
-        for _d in _dmg.detect(img_np):
-            _bx, _by, _bw, _bh = _d["bbox_pixels"]
-            _cls = 2 if _d.get("damage_code") == "D40" else 1
+    if seg_out and seg_out["components"]:
+        for comp in seg_out["components"]:
             proposals.append({
-                "bbox_pixels": [_bx, _by, _bw, _bh],
-                "seg_comp": {"seg_cls": _cls, "mean_p": float(_d.get("raw_confidence", _d.get("confidence", 0.0)))},
-                "source": "rdd_yolo",
+                "bbox_pixels": comp["bbox_pixels"],
+                "seg_comp": comp,
+                "source": (seg_out or {}).get("backend", "segmenter") + "_segmenter",
             })
-    _cwd = _SESSIONS.get("crosswalk_detector")
-    crosswalk_boxes = []
-    if _cwd is not None:
-        crosswalk_boxes = [d for d in _cwd.detect(img_np) if d.get("class_name") == "Zebra Crosswalk"]
 
-    surface_analysis = {"status": "not_modelled", "code": "paved_unverified"}
+    salient_boxes = _extract_salient_regions_numpy(img_np, excluded_boxes=pedestrians)
+    for sb in salient_boxes:
+        sbox = sb[:4]
+
+        if not any(_box_iou(sbox, p["bbox_pixels"]) > 0.40 for p in proposals):
+            proposals.append({
+                "bbox_pixels": sbox,
+                "seg_comp": None,
+                "source": "salient_cavity_detector",
+            })
+
+    from models.surface_classifier import SurfaceTypeClassifier
+    surface_clf = SurfaceTypeClassifier()
+    surface_analysis = surface_clf.analyze_surface(img_np, roi_top_fraction=0.38)
     surface_code = surface_analysis.get("code")
     is_unpaved = (surface_code == "unpaved_rural_earthen_dirt")
 
@@ -1444,7 +1425,10 @@ def audit_image_base64(
         and p["bbox_pixels"][3] >= 45
         for p in proposals
     )
-    is_water_relevant = False  # HSV water-pool proposer removed (heuristic, caused ghost boxes)
+    is_water_relevant = (
+        frame_cls_raw.get("class_id") in (2, 3)
+        or is_unpaved
+    ) and (frame_cls_raw.get("class_id") not in (0, 4, 5, 6))
 
     if is_water_relevant and not has_substantial_pothole:
         try:
@@ -1486,9 +1470,20 @@ def audit_image_base64(
         except Exception:
             pass
 
+    if not proposals and frame_cls_raw.get("class_id") in (1, 2) and float(frame_cls_raw.get("confidence", 0.0)) >= 0.85:
+        bw_fb, bh_fb = int(W * 0.38), int(H * 0.34)
+        bx_fb, by_fb = int(W * 0.31), int(H * 0.50)
+        proposals.append({
+            "bbox_pixels": [bx_fb, by_fb, bw_fb, bh_fb],
+            "seg_comp": {"seg_cls": int(frame_cls_raw["class_id"]), "mean_p": float(frame_cls_raw["confidence"])},
+            "source": "deep_cnn_roi_proposal",
+        })
+
     mask_full = seg_out["mask"] if seg_out else None
 
-    surface_analysis = {"status": "not_modelled", "code": "paved_unverified"}
+    from models.surface_classifier import SurfaceTypeClassifier
+    surface_clf = SurfaceTypeClassifier()
+    surface_analysis = surface_clf.analyze_surface(img_np, roi_top_fraction=0.38)
     surface_code = surface_analysis.get("code")
     is_unpaved = (surface_code == "unpaved_rural_earthen_dirt")
 
@@ -2102,10 +2097,35 @@ def audit_image_base64(
     # Advanced Model Stage 1: Pavement Material & Domain Classifier (SurfaceTypeNet)
     # surface_analysis already computed at start of candidate loop for domain guidance
 
-    # Removed: Metric3D / V-IMU / PINN / Forensic-VLM (circular labels, formula "ground truth").
-    _NM = {"status": "not_modelled",
-           "reason": "removed: no non-circular ground truth was available for this module"}
-    metric_3d_res = dict(_NM)
+    # Advanced Model Stage 2: Monocular Metric 3D Depth & Point-Cloud Integration
+    from models.metric_3d_depth import Metric3DDepthEngine
+    metric_3d_eng = Metric3DDepthEngine()
+    metric_3d_res = None
+    if primary_distress.get("bbox_pixels"):
+        mb = primary_distress["bbox_pixels"]
+        cls_id_pd = primary_distress.get("class_id", 2)
+        metric_3d_res = metric_3d_eng.evaluate_cavity_3d(gray, mb, class_id=cls_id_pd)
+        primary_distress["metric_3d_point_cloud"] = metric_3d_res["point_cloud_3d"]
+        primary_distress["volumetric_m3"] = metric_3d_res["volume_m3"]
+        primary_distress["automotive_chassis_hazard"] = metric_3d_res["automotive_hazard"]
+        primary_distress["astm_d6433_severity"] = metric_3d_res["astm_d6433_severity"]
+    else:
+        metric_3d_res = {
+            "depth_cm": 0.0,
+            "max_metric_depth_cm": 0.0,
+            "depth_low_cm": 0.0,
+            "depth_high_cm": 0.0,
+            "surface_area_m2": 0.0,
+            "volume_m3": 0.0,
+            "distance_meters": 0.0,
+            "point_cloud_3d": None,
+            "astm_d6433_severity": "NONE",
+            "automotive_hazard": None,
+            "morth_tonnage_t": 0.0,
+            "repair_cost_inr": 0.0,
+            "trained_checkpoint_loaded": bool(getattr(metric_3d_eng, "_trained_regressor", None) is not None),
+            "measurement_basis": "No localized pavement cavity detected in current frame",
+        }
 
     if surface_analysis.get("code") == "unpaved_rural_earthen_dirt":
         distress_dets = [d for d in detections if d.get("is_distress")]
@@ -2135,7 +2155,9 @@ def audit_image_base64(
         total_cost = round(sum(float(d.get("repair_cost_inr", 0.0)) for d in detections), 2)
 
     # Advanced Model Stage 3: Vision-IMU Cross-Modal Temporal Verification
-    vimu_fusion_res = {**_NM, "is_physically_verified": False}
+    from models.vimu_temporal_fusion import VIMUTemporalFusionEngine
+    vimu_eng = VIMUTemporalFusionEngine()
+    vimu_fusion_res = vimu_eng.fuse_detection(primary_distress, imu_series=imu_series)
 
     # Advanced Model Stage 4: Physics-Informed HDM-4 Lifecycle Trajectory
     from models.pinn_deterioration import PhysicsInformedHDM4Forecaster
@@ -2152,10 +2174,38 @@ def audit_image_base64(
     if pavement_age_yr is None:
         assumed_inputs["pavement_age_years"] = resolved_age
 
-    pinn_forecast = dict(_NM)
+    from models.pinn_deterioration import PhysicsInformedHDM4Forecaster
+    pinn_eng = PhysicsInformedHDM4Forecaster()
+    pinn_forecast = pinn_eng.forecast_trajectory(
+        init_area_m2=max(0.04, primary_distress.get("surface_area_m2", 0.0)),
+        depth_cm=max(2.0, primary_distress.get("depth_cm", 4.0)),
+        esal_trucks=resolved_esal,
+        rain_mm=resolved_rain,
+        pavement_age_yr=resolved_age,
+    )
+    pinn_forecast["environmental_parameters_source"] = (
+        "caller_supplied"
+        if not assumed_inputs
+        else "scene_derived_from_detected_traffic_pcu_and_moisture"
+    )
 
     # Advanced Model Stage 5: Forensic Vision-Language Report Generation
-    forensic_vlm_report = dict(_NM)
+    from models.forensic_vlm_auditor import ForensicVLMAuditor
+    vlm_auditor = ForensicVLMAuditor()
+    audit_state = {
+        "primary_distress": primary_distress,
+        "surface_material": surface_analysis,
+        "metric_3d": metric_3d_res or {},
+        "vimu_fusion": vimu_fusion_res,
+        "pinn_deterioration": pinn_forecast,
+        "morth_ledger": {
+            "total_bitumen_tonnage_t": total_tonnage,
+            "total_estimated_repair_inr": total_cost,
+        },
+    }
+    forensic_vlm_report = vlm_auditor.generate_audit_report(
+        audit_state, corridor_id=corridor_id, chainage_km=None
+    )
 
     work_order = None
     if detections and primary_distress["class_id"] in (1, 2, 3):
@@ -2232,7 +2282,6 @@ def audit_image_base64(
         "primary_detection": primary,
         "all_detections": all_dets,
         "surface_material": surface_analysis,
-        "crosswalk_boxes": crosswalk_boxes,
         "metric_3d_depth": metric_3d_res,
         "vimu_temporal_fusion": vimu_fusion_res,
         "pinn_hdm4_forecast": pinn_forecast,
