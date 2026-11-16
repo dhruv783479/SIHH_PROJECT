@@ -59,6 +59,7 @@ def convert(root, aliases, extra_map):
     """Return (rows_by_stem, raw_class_names). rows: list of (target, cx, cy, w, h) normalised."""
     imgs = find_images(root)
     rows, raw = {}, set()
+    ign = set()  # photos containing a class we were told to ignore
 
     def norm(name):
         n = name.strip().lower().replace(" ", "_")
@@ -78,6 +79,8 @@ def convert(root, aliases, extra_map):
             for name, x1, y1, x2, y2, w, h in read_voc(x):
                 raw.add(name)
                 t = norm(name)
+                if t == "ignore":
+                    ign.add(stem)
                 if t in TARGETS and w > 0 and h > 0:
                     rows.setdefault(stem, []).append((t, (x1 + x2) / 2 / w, (y1 + y2) / 2 / h, (x2 - x1) / w, (y2 - y1) / h))
             rows.setdefault(stem, rows.get(stem, []))
@@ -96,6 +99,8 @@ def convert(root, aliases, extra_map):
                 name = cats[a["category_id"]]
                 raw.add(name)
                 t = norm(name)
+                if t == "ignore":
+                    ign.add(stem)
                 x, y, w, h = a["bbox"]
                 W, H = float(im["width"]), float(im["height"])
                 if t in TARGETS:
@@ -121,31 +126,58 @@ def convert(root, aliases, extra_map):
                 name = names.get(int(float(p[0])), str(int(float(p[0]))))
                 raw.add(name)
                 tg = norm(name)
+                if tg == "ignore":
+                    ign.add(stem)
                 if tg in TARGETS:
                     rs.append((tg, *map(float, p[1:5])))
             rows[stem] = rs
+    # A photo whose only objects were ignored classes is NOT a clean road: drop it instead of
+    # writing an empty label (which would teach "nothing here" where something unlabelled is).
+    for st in ign:
+        if not rows.get(st):
+            rows.pop(st, None)
     return rows, imgs, raw
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
-    ap.add_argument("--dataset", action="append", required=True)
+    ap.add_argument("--dataset", action="append", default=[])
+    ap.add_argument("--local", action="append", default=[],
+                    help='already-downloaded dataset: "NAME,PATH,URL" (URL = where it came from, for provenance)')
     ap.add_argument("--map", action="append", default=[], help='raw=target, e.g. "hole=pothole"')
     ap.add_argument("--skip-download", action="store_true")
+    ap.add_argument("--ignore-unmapped", action="store_true",
+                    help="explicitly ignore every class that is not one of the 4 targets (printed, never silent)")
     a = ap.parse_args()
     extra = dict(m.split("=", 1) for m in a.map)
     os.makedirs(a.out, exist_ok=True)
     sources = {}
+    if not a.dataset and not a.local:
+        sys.exit("give at least one --dataset or --local")
+    jobs = []
     for spec in a.dataset:
         slug = spec.split(":")[0]
         name = slug.replace("/", "__")
         raw_dir = os.path.join(a.out, "_raw", name)
         if not a.skip_download:
             download(slug, raw_dir)
+        jobs.append((slug, name, raw_dir, f"https://www.kaggle.com/datasets/{slug}"))
+    for spec in a.local:
+        name, path, url = [x.strip() for x in spec.split(",", 2)]
+        if not os.path.isdir(path):
+            sys.exit(f"--local path not found: {path}")
+        jobs.append((name, name, path, url))
+    for slug, name, raw_dir, url in jobs:
         rows, imgs, raw = convert(raw_dir, DEFAULT_ALIASES, extra)
         print(f"{slug}: raw class names found = {sorted(raw)}; labelled images = {sum(1 for r in rows.values() if r)}")
         unmapped = [r for r in raw if (extra.get(r) or DEFAULT_ALIASES.get(r.strip().lower().replace(' ', '_'))) not in TARGETS + ['ignore']]
+        if unmapped and a.ignore_unmapped:
+            print(f"  --ignore-unmapped: ignoring classes {sorted(unmapped)} in {slug}")
+            for r in unmapped:
+                extra[r] = "ignore"
+            rows, imgs, raw = convert(raw_dir, DEFAULT_ALIASES, extra)
+            unmapped = []
         if unmapped:
             sys.exit(f"cannot map classes {unmapped} for {slug}; pass --map 'raw=target' or ignore them explicitly with --map 'raw=ignore'")
         n = 0
@@ -158,7 +190,7 @@ def main():
             with open(os.path.join(a.out, name, "labels", stem + ".txt"), "w") as fh:
                 fh.write("\n".join(f"{TARGETS.index(t)} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}" for t, cx, cy, w, h in rs))
             n += 1
-        sources[name] = {"url": f"https://www.kaggle.com/datasets/{slug}", "licence": "SEE KAGGLE PAGE - fill in before training",
+        sources[name] = {"url": url, "licence": "SEE KAGGLE PAGE - fill in before training",
                          "human_labelled": True,
                          "class_map": {str(i): t for i, t in enumerate(TARGETS)}, "n_images": n}
         print(f"  wrote {n} images")
