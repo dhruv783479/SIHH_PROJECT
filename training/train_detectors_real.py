@@ -95,7 +95,7 @@ def load_sources(data_root):
     for name, meta in src.items():
         if meta.get("human_labelled") is not True:
             raise SystemExit(f"source '{name}' is not marked human_labelled=true; refusing to train on it")
-        if "SEE KAGGLE PAGE" in str(meta.get("licence", "")):
+        if any(m in str(meta.get("licence", "")) for m in ("SEE KAGGLE PAGE", "CHECK ")):
             raise SystemExit(f"source '{name}': replace the licence placeholder in sources.json with the real licence")
         for field in ("url", "licence", "class_map"):
             if field not in meta:
