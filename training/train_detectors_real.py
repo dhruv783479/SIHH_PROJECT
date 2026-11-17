@@ -140,6 +140,22 @@ def remap_label(label_path, class_map):
     return rows
 
 
+def drop_near_duplicates_of(items, excluded_hashes, max_dist=4, hash_fn=None):
+    """Remove every item whose dHash is within max_dist bits of an excluded photograph.
+
+    Used to keep a FROZEN test set unseen: photographs that are copies of it (or near-copies, by the same
+    rule the split uses) never enter the training pool. Returns (kept items, number dropped)."""
+    hash_fn = hash_fn or dhash
+    kept, dropped = [], 0
+    for it in items:
+        h = hash_fn(it["image"])
+        if h is not None and any(hamming(h, e) <= max_dist for e in excluded_hashes):
+            dropped += 1
+        else:
+            kept.append(it)
+    return kept, dropped
+
+
 def build_splits(items, out_dir, ratios=(0.8, 0.1, 0.1)):
     hashes = {}
     for it in items:
@@ -194,6 +210,9 @@ def main():
     ap.add_argument("--weights", default="yolov8s.pt")
     ap.add_argument("--epochs", type=int, default=100)
     ap.add_argument("--imgsz", type=int, default=640)
+    ap.add_argument("--exclude-near-duplicates-of", default=None, metavar="DIR",
+                    help="folder of photographs (e.g. a previous run's split/test/images) whose copies and "
+                         "near-copies are removed from the training pool, so that set stays unseen")
     args = ap.parse_args()
 
     from ultralytics import YOLO
@@ -203,9 +222,21 @@ def main():
     items = collect(args.data_root, sources)
     if not items:
         raise SystemExit("no labelled images found")
+    n_frozen_dropped = None
+    if args.exclude_near_duplicates_of:
+        ex_imgs = [p for p in glob.glob(os.path.join(args.exclude_near_duplicates_of, "*"))
+                   if p.lower().endswith((".jpg", ".jpeg", ".png"))]
+        if not ex_imgs:
+            raise SystemExit(f"no photographs found in {args.exclude_near_duplicates_of}")
+        ex_hashes = [h for h in (dhash(p) for p in ex_imgs) if h is not None]
+        items, n_frozen_dropped = drop_near_duplicates_of(items, ex_hashes)
+        print(f"frozen test set: {len(ex_hashes)} photographs; {n_frozen_dropped} pool photographs dropped as "
+              f"copies or near-copies of them; {len(items)} remain", flush=True)
     split_dir = os.path.join(args.out, "split")
     shutil.rmtree(split_dir, ignore_errors=True)
     split_report = build_splits(items, split_dir)
+    if n_frozen_dropped is not None:
+        split_report["dropped_as_near_duplicates_of_frozen_test"] = n_frozen_dropped
     if split_report["test_images_with_near_duplicate_in_train"] != 0:
         raise SystemExit(f"leak: {split_report['test_images_with_near_duplicate_in_train']} test images have a near-duplicate in train")
 
