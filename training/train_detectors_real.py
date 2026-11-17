@@ -9,8 +9,9 @@ What this does (and what it refuses to do)
     cluster entirely in ONE split (train / val / test), so a photo and its
     re-encodes can never straddle the boundary. This is the leak the earlier
     file-index split had.
-  * Fixes the model-selection rule BEFORE the test split is touched: best
-    val mAP50 on the pothole class. The test split is scored exactly once.
+  * Fixes the model-selection rule BEFORE the test split is touched: the weights
+    are the epoch with the best Ultralytics validation fitness (0.1*mAP50 +
+    0.9*mAP50-95 over all classes). The test split is scored exactly once.
   * Writes only measured numbers to the metrics JSON. Nothing is defaulted.
 
 Expected layout (YOLO format, one folder per source):
@@ -46,7 +47,9 @@ import yaml
 CLASSES = ["longitudinal_crack", "transverse_crack", "alligator_crack", "pothole"]
 SEED = 20260516
 # Declared before any test image is scored. Do not edit after seeing test results.
-SELECTION_RULE = "best validation mAP50 on class 'pothole'; ties -> higher val mAP50-95; test scored once"
+SELECTION_RULE = ("best.pt = the epoch with the best Ultralytics validation fitness "
+                  "(0.1 * mAP50 + 0.9 * mAP50-95 over all classes), early stop after 25 epochs without gain; "
+                  "the test split is scored once, after the weights are fixed")
 
 
 def dhash(img_path, size=8):
