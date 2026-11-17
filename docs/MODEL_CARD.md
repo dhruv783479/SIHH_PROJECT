@@ -1,6 +1,6 @@
 # ROAD-SHIELD model card
 
-Generated 2026-10-30 from `checkpoints/claims.json` by `scripts/build_model_card.py`. Regenerate after any retraining; do not edit by hand.
+Generated 2026-11-17 from `checkpoints/claims.json` by `scripts/build_model_card.py`. Regenerate after any retraining; do not edit by hand.
 
 ## System at a glance
 
@@ -52,16 +52,16 @@ Generated 2026-10-30 from `checkpoints/claims.json` by `scripts/build_model_card
 
 | metric | value |
 |---|---|
-| crack iou | 0.2314 |
-| pothole iou | 0.1437 |
-| crack dice | 0.3758 |
-| pothole dice | 0.2513 |
-| clean road false blob rate | 0.2333 |
+| crack iou | 0.2079 |
+| pothole iou | 0.119 |
+| crack dice | 0.3442 |
+| pothole dice | 0.2127 |
+| clean road false blob rate | 0.1917 |
 | clean photographs scored | 120 |
-| test photographs | 500 |
-| training pixels | 3692729 |
+| test photographs | 125 |
+| training pixels | 1340122 |
 
-**Limits - do not rely on it for this.** IoU of 0.2314 (crack) and 0.1437 (pothole) is a working model, not a solved problem. On held-out clean roads the segmenter alone draws a false blob on 23.3% of 120 photographs. The CNN semantic gate in front of it reduced clean roads with a false blob from 8/50 to 2/50 and raised pothole IoU from 0.1024 to 0.2706 (checkpoints/semantic_gate_report.json, measured with the frozen-embedding classifier). Water-filled potholes are still under-detected.
+**Limits - do not rely on it for this.** IoU of 0.2079 (crack) and 0.119 (pothole) is a working model, not a solved problem. On held-out clean roads the segmenter alone draws a false blob on 19.2% of 120 photographs. The CNN semantic gate in front of it reduced clean roads with a false blob from 8/50 to 2/50 and raised pothole IoU from 0.1024 to 0.2706 (checkpoints/semantic_gate_report.json, measured with the frozen-embedding classifier). Water-filled potholes are still under-detected.
 
 **Alternatives tried.** A U-Net (ResNet-18 encoder) was trained on the same polygons and did NOT replace this model: calibration IoU crack 0.268 vs 0.214, pothole 0.646 vs 0.119; clean false-blob rate 0.0 vs 0.1807; NOT served after the end-to-end check: end to end, U-Net found 18/24 defects with 6/36 false positives; the pixel classifier found 20/24 with 2/36 Held-out test (same 500 photographs): U-Net crack IoU 0.3035, pothole IoU 0.4661; pixel classifier crack 0.2314, pothole 0.1437.
 
@@ -109,6 +109,27 @@ Generated 2026-10-30 from `checkpoints/claims.json` by `scripts/build_model_card
 **Limits - do not rely on it for this.** This is a COCO detector: it has NO pavement class. It does not find potholes. Defect localisation is the segmenter's job.
 
 **Alternatives tried.** Faster R-CNN - two-stage, far too slow on an edge CPU. Facial recognition - rejected outright as invasive.
+
+## Road-damage detector (RDD2022 India)
+
+**Intended use.** Draw boxes around cracks and potholes in a road frame (display only; area and cost still come from the mask).
+
+**Model.** YOLOv8s fine-tuned on RDD2022 India + Kaggle pothole (this repository's own run)
+
+**Why this design.** A whole-image classifier cannot say where in a frame the damage is. Trained on the RDD2022 India boxes; weights and serving threshold chosen on the validation split, test scored once.
+
+**Measured (held-out data).**
+
+| metric | value |
+|---|---|
+| test map50 | 0.4005 |
+| test map50 95 | 0.1863 |
+| test photographs | 780 |
+| serving confidence | 0.25 |
+
+**Limits - do not rely on it for this.** ['zebra crossings (a separate pretrained detector is used as published)', 'people and vehicles (a COCO-pretrained detector is used as published)', 'accuracy on bus-mounted video; the test photographs are public-repository images', 'box tightness beyond mAP@0.5:0.95 on the held-out test split']
+
+**Evidence.** `checkpoints/road_damage_detector_report.json, training/train_rdd_detector.py` · reproduce: `python -m training.train_rdd_detector`
 
 ## Privacy redaction
 
@@ -172,7 +193,7 @@ Every deep model replaces its simpler counterpart only by a rule written before 
 - **Fairness is geographic.** Roads without bus routes are not inspected, and a model trained in one country degrades in another (33% on Indian roads before Indian data was added). Coverage and per-city accuracy must be reported before any allocation of repair budgets relies on the system.
 - **Money.** Costs are ranges from an estimated depth. A work order is a recommendation for a human authority, sealed so it cannot be altered after issue.
 
-## Corrections on record (18)
+## Corrections on record (20)
 
 Claims this project made and later withdrew or corrected, kept visible on the Architecture page:
 
@@ -194,3 +215,5 @@ Claims this project made and later withdrew or corrected, kept visible on the Ar
 - **REVERSED** - The U-Net segmenter serves (pothole IoU 0.641 vs 0.144)
 - **NOT SERVED** - The U-Net segmenter serves (pothole IoU 0.632 vs 0.144) - multi-dataset run
 - **REVERSED** - The U-Net segmenter serves (pothole IoU 0.466 vs 0.144)
+- **REVERSED** - The five advanced modules (SurfaceTypeNet 100% accuracy, Metric3D R2, V-IMU fusion, PINN, Forensic VLM) are measured models
+- **REVERSED** - Heuristic box proposers (mask components, HSV water-pool, salience scan, fixed fallback box) give reliable boxes

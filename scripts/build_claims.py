@@ -415,6 +415,17 @@ def _deep_extras(claims, rep):
         if blocked:
             entry["role"] = ("Trained and measured, NOT shown: the " + blocked.replace("_", " ") + " in "
                              "scripts/verify_rdd_detector.py is missing or failed")
+        if blocked:
+            ph = (det.get("data") or {}).get("photographs") or {}
+            for c in claims["corrections"]:
+                if c.get("claim", "").startswith("Heuristic box proposers"):
+                    c["reason"] = (
+                        "They can produce ghost boxes at image corners and can suppress a second water-filled cavity; "
+                        "they are not a trained detector. A YOLOv8s detector was retrained on duplicate-safe data "
+                        f"(test mAP@0.5 {t.get('map50')} on {ph.get('test')} held-out photographs), but its exported file "
+                        "failed the artefact check in scripts/verify_rdd_detector.py, so its boxes are hidden and the "
+                        "heuristic proposers are still what finds potholes. The previous shipped weights found 0 pothole "
+                        "boxes at conf 0.25 and 2 at conf 0.05 on 40 Kaggle pothole photographs.")
         if "M_RDD" in subs:
             subs["M_RDD"].update(entry)
         else:

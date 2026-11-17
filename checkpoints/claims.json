@@ -1,5 +1,5 @@
 {
-  "generated_unix": 1794871993,
+  "generated_unix": 1794926068,
   "principle": "Deep learning where perception is hard; deterministic mathematics where explainability and civil compliance are non-negotiable. Every entry below states what was measured, by which script, and what is NOT claimed.",
   "subsystems": [
     {
@@ -398,6 +398,83 @@
       "reproduce": "python -m unittest tests/test_road_shield.py",
       "not_claimed": "Video section operates strictly in PRETRAINED_YOLO_ONLY mode; civil repair costing belongs to Photo Section.",
       "served": true
+    },
+    {
+      "id": "M_RDD",
+      "name": "Road-damage detector (RDD2022 India)",
+      "architecture": "YOLOv8s fine-tuned on RDD2022 India + Kaggle pothole (this repository's own run)",
+      "role": "Trained and measured, NOT shown: the artefact check in scripts/verify_rdd_detector.py is missing or failed",
+      "why": "A whole-image classifier cannot say where in a frame the damage is. Trained on the RDD2022 India boxes; weights and serving threshold chosen on the validation split, test scored once.",
+      "measured": {
+        "test_map50": 0.4004529107704239,
+        "test_map50_95": 0.1863287269765576,
+        "test_precision": null,
+        "test_recall": null,
+        "per_class": {
+          "longitudinal_crack": {
+            "precision": 0.4707302784306551,
+            "recall": 0.3419354838709677,
+            "ap50": 0.34176888708866077,
+            "ap50_95": 0.1394248214190866
+          },
+          "transverse_crack": {
+            "precision": 0.406074573860779,
+            "recall": 0.125,
+            "ap50": 0.14112903225806456,
+            "ap50_95": 0.07744023296290109
+          },
+          "alligator_crack": {
+            "precision": 0.5513815370808385,
+            "recall": 0.5959108387636143,
+            "ap50": 0.5442761156967746,
+            "ap50_95": 0.22993030960110286
+          },
+          "pothole": {
+            "precision": 0.63801325156222,
+            "recall": 0.5315487571701721,
+            "ap50": 0.5746376080381955,
+            "ap50_95": 0.29851954392314006
+          }
+        },
+        "test_photographs": 780,
+        "serving_confidence": 0.25
+      },
+      "evidence": "checkpoints/road_damage_detector_report.json, training/train_rdd_detector.py",
+      "reproduce": "python -m training.train_rdd_detector",
+      "not_claimed": [
+        "zebra crossings (a separate pretrained detector is used as published)",
+        "people and vehicles (a COCO-pretrained detector is used as published)",
+        "accuracy on bus-mounted video; the test photographs are public-repository images",
+        "box tightness beyond mAP@0.5:0.95 on the held-out test split"
+      ],
+      "served": false,
+      "checks": {
+        "artefact": {
+          "onnx_test_map50": 0.4216,
+          "best_pt_test_map50": 0.4005,
+          "serving_decoder_vs_best_pt": {
+            "photographs": 100,
+            "best_pt_boxes": 233,
+            "serving_boxes": 223,
+            "recall": 0.9442,
+            "precision": 0.9865
+          },
+          "rule": "ONNX test mAP@0.5 within 0.02 of best.pt, and the serving decoder recovers >= 90% of best.pt's boxes with >= 90% of its own matched (same class, IoU >= 0.5)",
+          "passed": false,
+          "onnx_sha256": "8e0bc7e325f10330b8cd1638168bef37bc48fd7ec4b7b54b10434638d4633634",
+          "diagnostic_best_pt_cpu_batch1": {
+            "note": "best.pt scored with the same settings as the ONNX run (CPU, batch 1, test split), run by the team after the check failed; does not change the result",
+            "test_map50": 0.3996,
+            "test_map50_95": 0.1857,
+            "onnx_test_map50_95": 0.186,
+            "onnx_precision": 0.635,
+            "onnx_recall": 0.382,
+            "best_pt_precision": 0.515,
+            "best_pt_recall": 0.401
+          }
+        },
+        "clean_roads": null
+      }
     }
   ],
   "corrections": [
@@ -499,7 +576,7 @@
     {
       "claim": "Heuristic box proposers (mask components, HSV water-pool, salience scan, fixed fallback box) give reliable boxes",
       "status": "REVERSED",
-      "reason": "They produced ghost boxes at image corners and suppressed second water-filled cavities. Boxes now come only from trained detectors. Measured on 40 Kaggle pothole photos, the shipped RDD2022 weights found 0 pothole boxes at conf 0.25 and 2 at conf 0.05, so pothole recall is currently NOT adequate until the detector is retrained with training/train_detectors_real.py."
+      "reason": "They can produce ghost boxes at image corners and can suppress a second water-filled cavity; they are not a trained detector. A YOLOv8s detector was retrained on duplicate-safe data (test mAP@0.5 0.4004529107704239 on 780 held-out photographs), but its exported file failed the artefact check in scripts/verify_rdd_detector.py, so its boxes are hidden and the heuristic proposers are still what finds potholes. The previous shipped weights found 0 pothole boxes at conf 0.25 and 2 at conf 0.05 on 40 Kaggle pothole photographs."
     }
   ]
 }
