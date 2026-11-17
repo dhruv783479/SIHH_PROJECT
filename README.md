@@ -73,10 +73,10 @@ SurfaceTypeNet, Metric3D, V-IMU, PINN-HDM4 and the Forensic VLM were removed fro
 
 ### Field-Inspection Grounding & Integrity Gates
 
-- **High-Confidence Crack Fissure Extraction**: Refined pixel segmentation proposal floor (`mean_p >= 0.65` and `area >= 18 px`) captures thin longitudinal and alligator cracking networks in the road body (e.g., CRACK500 fatigue cracking) with 0 false alarms on sound pavement.
+- **High-Confidence Crack Fissure Extraction**: Refined pixel segmentation proposal floor (`mean_p >= 0.65` and `area >= 18 px`) captures thin longitudinal and alligator cracking networks in the road body (e.g., CRACK500 fatigue cracking) On 120 clean-road photographs the pixel segmenter flagged a blob on 23 (19.2%), so it is not false-alarm free.
 - **Carriageway-Bound Zebra Crossing Detection**: MoRTH Class 4 fallbacks bind to the carriageway bounding box detected by the geometric crosswalk analyzer (`detect_zebra`), eliminating background overlap on buildings or sky.
 - **Geotechnical Survey & Pricing Guard**: Uncalibrated macro close-ups covering > 35% of the frame or > 2.0 m² are flagged for manual field survey (IRC:37/82) with ₹0 committed, preventing runaway patch price estimates on cropped photos.
-- **Full Serverless & Local Parity**: 100% logical and mathematical consistency across `pipeline/deep_inference_pipeline.py` and `api/vercel_inference.py` verified across all 84 test cases.
+- **Serverless and local paths**: `pipeline/deep_inference_pipeline.py` and `api/vercel_inference.py` are covered by the same test suite; this is a test result, not a proof that the two always agree.
 
 **How a model gets served.** Each deep model replaces its classical counterpart only by a rule written before its test set is scored: the fine-tuned CNN must beat the frozen head on validation accuracy *and* macro-F1; the U-Net must beat the pixel classifier on crack *and* pothole IoU on calibration photographs without more false blobs on clean roads, and then hold up end to end - through the full pipeline on photographs from other datasets it must find at least as many defects with no more false alarms (`scripts/segmenter_deployment_check.py`; it did not: U-Net 18/24 defects found vs 20/24); the IMU CNN must win 5-fold cross-validation on accuracy *and* macro-F1. Losers are reported, not hidden. Pretrained ImageNet/COCO weights are the starting point (transfer learning); training then updates every layer on this project's data, except the frozen-head baseline.
 
@@ -216,9 +216,9 @@ Main API endpoints (full reference at `/api-docs`): `POST /api/v1/pipeline/deep-
 
 ## Test Suite & Verification Gates
 
-- **Unit Tests Passing**: **84 of 84** (43 in `tests.test_road_shield`, 41 in `tests.test_geometry_and_storage`).
-- **False Positive Rejection**: 0 false alarms on sound pavement, clean pedestrian stripes, or non-road scenes.
-- **Serverless & Local Parity**: Identical decision boundaries, PCI regressions, and MoRTH costing.
+- **Unit tests**: 375 pass and 1 is skipped (full suite, Python 3.13, run before the last merge).
+- **False alarms**: the retrained detector's clean-road check has not been run, so its false-alarm rate on sound pavement is not measured; its boxes are hidden.
+- **Serverless and local paths**: see the test suite; no claim of identical outputs is made here.
 
 ## Limitations
 
