@@ -43,3 +43,18 @@ class TestNearDuplicateGrouping(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(t is None, "training module needs cv2/numpy/yaml")
+class TestFrozenTestExclusion(unittest.TestCase):
+    def test_copies_and_near_copies_of_the_frozen_set_are_dropped(self):
+        fake = {"a.jpg": 0b1010, "near.jpg": 0b1011, "far.jpg": (1 << 40) - 1, "none.jpg": None}
+        items = [{"image": k} for k in fake]
+        kept, dropped = t.drop_near_duplicates_of(items, [0b1010], max_dist=4, hash_fn=lambda p: fake[p])
+        self.assertEqual(dropped, 2)
+        self.assertEqual(sorted(i["image"] for i in kept), ["far.jpg", "none.jpg"])
+
+    def test_nothing_is_dropped_without_exclusions(self):
+        items = [{"image": "x"}]
+        kept, dropped = t.drop_near_duplicates_of(items, [], hash_fn=lambda p: 5)
+        self.assertEqual((len(kept), dropped), (1, 0))
