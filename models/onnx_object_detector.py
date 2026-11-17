@@ -165,8 +165,18 @@ class ONNXObjectDetector:
                 pass
             import onnxruntime as ort
             from models.cnn_embedder import _session_options
-            self._session = ort.InferenceSession(path, _session_options(ort),
-                                                 providers=["CPUExecutionProvider"])
+            try:
+                self._session = ort.InferenceSession(path, _session_options(ort),
+                                                     providers=["CPUExecutionProvider"])
+            except Exception as first:
+                # Low memory ("bad allocation") is the usual cause. Retry the SAME runtime with graph
+                # optimisation off, which needs far less memory while loading and gives the same outputs,
+                # before falling back to cv2.dnn (a different runtime than the one the model was scored with).
+                print(f"[detector] ORT load failed ({first}); retrying with graph optimisation off")
+                opts = _session_options(ort)
+                opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
+                opts.enable_mem_pattern = False
+                self._session = ort.InferenceSession(path, opts, providers=["CPUExecutionProvider"])
             inp = self._session.get_inputs()[0]
             self._input_name = inp.name
             if isinstance(inp.shape[-1], int) and inp.shape[-1] > 0:
