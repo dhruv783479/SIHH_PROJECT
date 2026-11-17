@@ -19,3 +19,15 @@ go into the report; a failed check is recorded as failed.
 Note on the metrics file: `selection_rule` in a `detector_metrics.json` written before commit
 "Selection rule wording" describes the rule as pothole mAP50, which is not what Ultralytics does.
 The weights are chosen on Ultralytics' validation fitness (0.1*mAP50 + 0.9*mAP50-95, all classes).
+
+## After the two Colab cells: install the model (on your computer, in the repository)
+
+    python -m scripts.install_trained_detector --metrics detector_metrics.json --onnx best.onnx --artefact artefact_check.json
+    python -m scripts.verify_rdd_detector --clean-roads
+
+The installer refuses a `best.onnx` whose SHA-256 differs from the one the trainer recorded, an
+`artefact_check.json` made for another file, and a test split with near-duplicates in training. It
+writes `checkpoints/damage_rdd2022_india.onnx`, `damage_rdd2022_india.json` and
+`road_damage_detector_report.json` with only measured values and keeps the previous records as
+`previous_model`. The second command records the clean-road check; boxes are shown only if both
+recorded checks passed.
