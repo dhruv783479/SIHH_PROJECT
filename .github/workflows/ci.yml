@@ -57,8 +57,8 @@ jobs:
           sys.exit(1 if bad else 0)
           "
 
-      - name: Training and utility scripts compile
-        run: python -m compileall -q scripts training colab
+      - name: Every source file compiles
+        run: python -m compileall -q api edge mlops models pipeline services scripts training colab tests
 
       - name: Regression suite
         env:

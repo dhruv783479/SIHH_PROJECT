@@ -1341,7 +1341,7 @@ def audit_image_base64(
                 "found": False,
                 "bars": [],
                 "bar_count": 0,
-                "reason": f"suppressed on distress road (distress {(CLASS_NAMES[f_cls] if 0 <= f_cls < len(CLASS_NAMES) else "Unknown")} conf {f_conf:.2f}, solidity {mean_solidity:.2f})",
+                "reason": f"suppressed on distress road (distress {(CLASS_NAMES[f_cls] if 0 <= f_cls < len(CLASS_NAMES) else 'Unknown')} conf {f_conf:.2f}, solidity {mean_solidity:.2f})",
             }
         else:
             all_cross = markings_res.get("all_crossings") or [markings_res]
