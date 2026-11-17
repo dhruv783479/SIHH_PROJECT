@@ -560,7 +560,13 @@ class TestPretrainedYOLOVideoEngine(unittest.TestCase):
         self.assertTrue(eng.is_ready)
         manifest = eng.active_models_manifest()
         ids = {m["id"] for m in manifest}
-        self.assertIn("yolo11n_rdd2022", ids)
+        # The road-damage detector is listed only while both gating checks recorded with it have passed
+        # (models.road_damage_detector.detector_blocked_by); the two other detectors are always listed.
+        import json, os
+        from models.road_damage_detector import CKPT_DIR, META_NAME, detector_blocked_by
+        with open(os.path.join(CKPT_DIR, META_NAME), encoding="utf-8") as fh:
+            blocked = detector_blocked_by(json.load(fh))
+        self.assertEqual("yolo11n_rdd2022" in ids, blocked is None)
         self.assertIn("yolov8n_coco", ids)
         self.assertIn("yolov8n_crosswalk", ids)
 

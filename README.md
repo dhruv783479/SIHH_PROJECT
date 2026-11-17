@@ -18,6 +18,7 @@ A road photograph goes in. A classified, outlined, measured and costed repair or
 | Hand-crafted baseline (HOG + LBP + colour → SVM) | 78.0%, macro-F1 0.651 | the identical split — the number the deep model has to beat |
 | Defect segmentation (pixel classifier) | crack IoU **0.208**, pothole IoU **0.119** | 125 held-out DNIT photographs |
 | CNN semantic gate on the segmenter | pothole IoU 0.102 → 0.271; clean roads with a false blob 8/50 → 2/50 | photographs the classifier never saw |
+| Road-damage detector (YOLOv8s, boxes), retrained | mAP@0.5 **0.400**, mAP@0.5:0.95 0.186 | 780 held-out photographs, duplicate-safe split. **Boxes hidden:** the exported ONNX file failed the artefact check |
 | IMU shock classifier (RandomForest) | **86.6%** accuracy, macro-F1 0.776 | 164 held-out windows of real Indian-road drive logs, split by time block |
 
 ## What it does
@@ -60,6 +61,7 @@ Measured on one photograph through the API: with an assumed camera mount the def
 | HOG/LBP + PCA + SVM | classical features | yes | 78.0% | fallback |
 | U-Net (ResNet-18 encoder) | deep segmenter, ImageNet encoder, all layers trained | yes (GPU) | crack 0.303, pothole 0.466 | no (won on masks, lost the end-to-end check; 18/24 end to end) |
 | Pixel segmenter | gradient boosting on 11 features | yes | crack 0.208, pothole 0.119 | **yes** |
+| YOLOv8s road-damage detector | yolov8s.pt (COCO-pretrained) on RDD2022 India + Kaggle pothole | yes (GPU) | mAP@0.5 0.400 | **no** — the exported ONNX file failed the artefact check; boxes hidden |
 | YOLOv8n (COCO) | pretrained object detector | **no** — used as published | people, vehicles, signs | yes |
 | IMU 1-D CNN | deep, from scratch | yes (GPU) | 79.9% | no (lost in cross-validation) |
 | IMU RandomForest | classical, from scratch | yes | 86.6% | **yes** |
@@ -102,6 +104,9 @@ Normal road, crack and pothole carry almost all test images. The four rare class
 | Kaggle surface cracks (concrete walls) | — | 0 of 2,376 | **excluded**: close-ups of plaster with no road and no horizon (`pipeline/corpus_policy.py`); kept on disk, reproducible with `ROAD_SHIELD_NO_CORPUS_FILTER=1` |
 | Wikimedia Commons / Geograph + field photographs | waterlogging, zebra, divider, sign | 207 | ~50 photographs per rare class — still the binding constraint |
 | IMU drive logs (`VishalSingh25/Pothole-Project`) | 4 shock classes | 852 windows | 10 real drives on Indian roads, 205,491 samples at 100 Hz, from a car — not a bus |
+| RDD2022 India + Kaggle pothole boxes (detector) | D00 / D10 / D20 / D40 | 6,248 / 781 / 780 photographs (train / val / test) | duplicate-clustered split; 0 test photographs have a near-duplicate in train |
+
+**Retrained detector: why its boxes are hidden.** The exported ONNX file scores mAP@0.5 0.422 on the test split against 0.401 for the trained network, a gap of 0.0211; the rule, fixed before the run, allows 0.02. The serving decoder itself passed its part of the check (94.4% recall and 98.7% precision against the trained network on 100 photographs). Scoring the trained network under the same settings gave 0.400, so the settings do not explain the gap. The cause has not been found and the rule was not loosened. The clean-road check has not been run (it runs only after the artefact check passes).
 
 ## How the numbers are kept honest
 
@@ -110,7 +115,7 @@ Normal road, crack and pothole carry almost all test images. The four rare class
 - **Near-duplicate rejection**: every image is perceptually hashed; within 8 bits of an existing image is a re-upload (threshold measured over 60 photographs, not guessed).
 - **Label-conflict audit**: 20 photographs were filed under three contradictory labels at once — the bug that held accuracy at 36.6%.
 - **Domain policy**: data that is not a road scene is excluded from road-scene training and measurement, and the exclusion travels with every number it changes.
-- **Claims registry**: `checkpoints/claims.json` lists 25 subsystems with their evidence files and 20 earlier claims that were withdrawn or corrected; the site's Architecture page shows both.
+- **Claims registry**: `checkpoints/claims.json` lists 26 subsystems with their evidence files and 20 earlier claims that were withdrawn or corrected; the site's Architecture page shows both.
 - **Nothing invented at runtime**: no default GPS, no default PCI, no confidence where there is no probability; missing inputs produce a 400 or an explicit `unavailable`.
 
 ## System design and platform
@@ -196,7 +201,8 @@ Main API endpoints (full reference at `/api-docs`): `POST /api/v1/pipeline/deep-
 | `web/` | the site (`web/config.js` names the live engine it sends photographs to) |
 | `deploy/` | the Hugging Face Space that hosts the public live engine |
 | `docs/` | system design and the claims-vs-repository audit |
-| `tests/` | 373 tests: models, pipeline, REST API, integrity fixes, Vercel entry point |
+| `docs/project/` | the 10-page project report and the 10-slide deck (PDF and editable source) |
+| `tests/` | 375 tests: models, pipeline, REST API, integrity fixes, Vercel entry point |
 
 ## Visual Evaluation Suite
 

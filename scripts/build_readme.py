@@ -354,8 +354,9 @@ def build():
           f"{sv.get('photographs')} photographs). "
           + (f"Scoring the trained network under the same settings gave {f3(dg.get('test_map50'))}, so the settings do not "
              "explain the gap. " if dg else "")
-          + "The cause has not been found and the rule was not loosened. The clean-road check is "
-          + ("recorded as failed." if det_dp.get("passed") is False else "not yet run."))
+          + "The cause has not been found and the rule was not loosened. "
+          + ("The clean-road check is recorded as failed." if det_dp.get("passed") is False
+             else "The clean-road check has not been run (it runs only after the artefact check passes)."))
         w("")
     w("## How the numbers are kept honest")
     w("")

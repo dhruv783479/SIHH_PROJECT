@@ -1,0 +1,141 @@
+{
+  "model": "YOLOv8s fine-tuned on RDD2022 India + Kaggle pothole (this repository's own run)",
+  "weights_init": "yolov8s.pt (COCO-pretrained)",
+  "input_size": 640,
+  "classes": [
+    "D00",
+    "D10",
+    "D20",
+    "D40"
+  ],
+  "raw_names": {
+    "0": "longitudinal_crack",
+    "1": "transverse_crack",
+    "2": "alligator_crack",
+    "3": "pothole"
+  },
+  "data": {
+    "photographs": {
+      "train": 6248,
+      "val": 781,
+      "test": 780
+    },
+    "test_instances": {
+      "longitudinal_crack": 155,
+      "transverse_crack": 8,
+      "alligator_crack": 198,
+      "pothole": 523
+    },
+    "near_duplicates_of_test_in_train": 0,
+    "sources": {
+      "andrewmvd__pothole-detection": {
+        "url": "https://www.kaggle.com/datasets/andrewmvd/pothole-detection",
+        "licence": "Database Contents License (DbCL) v1.0, as stated in the description on the Kaggle page (sidebar field reads 'Other (specified in description)'), read 17-11-2026; credit the original authors: Make ML, Potholes Dataset, https://makeml.app/datasets/potholes"
+      },
+      "rdd2022_india": {
+        "url": "https://figshare.com/articles/dataset/RDD2022_-_The_multi-national_Road_Damage_Dataset_released_through_CRDDC_2022/21431547",
+        "licence": "CC BY 4.0 (figshare record 10.6084/m9.figshare.21431547.v1, licence field read from the figshare API on 17-11-2026)"
+      }
+    }
+  },
+  "selection_rule": "best.pt = the epoch with the best Ultralytics validation fitness (0.1*mAP50 + 0.9*mAP50-95 over all classes), early stop after 25 epochs without gain; the test split is scored once, after the weights are fixed",
+  "selection_rule_as_recorded_by_trainer": "best validation mAP50 on class 'pothole'; ties -> higher val mAP50-95; test scored once",
+  "val": {
+    "map50": 0.3986767318032929,
+    "map50_95": 0.1861418694116343
+  },
+  "test": {
+    "map50": 0.4004529107704239,
+    "map50_95": 0.1863287269765576,
+    "per_class": {
+      "longitudinal_crack": {
+        "precision": 0.4707302784306551,
+        "recall": 0.3419354838709677,
+        "ap50": 0.34176888708866077,
+        "ap50_95": 0.1394248214190866
+      },
+      "transverse_crack": {
+        "precision": 0.406074573860779,
+        "recall": 0.125,
+        "ap50": 0.14112903225806456,
+        "ap50_95": 0.07744023296290109
+      },
+      "alligator_crack": {
+        "precision": 0.5513815370808385,
+        "recall": 0.5959108387636143,
+        "ap50": 0.5442761156967746,
+        "ap50_95": 0.22993030960110286
+      },
+      "pothole": {
+        "precision": 0.63801325156222,
+        "recall": 0.5315487571701721,
+        "ap50": 0.5746376080381955,
+        "ap50_95": 0.29851954392314006
+      }
+    }
+  },
+  "serving_confidence": 0.25,
+  "serving_confidence_chosen_on": "loader default; not tuned on any split",
+  "onnx_sha256": "8e0bc7e325f10330b8cd1638168bef37bc48fd7ec4b7b54b10434638d4633634",
+  "seed": 20260516,
+  "not_claimed": [
+    "zebra crossings (a separate pretrained detector is used as published)",
+    "people and vehicles (a COCO-pretrained detector is used as published)",
+    "accuracy on bus-mounted video; the test photographs are public-repository images",
+    "box tightness beyond mAP@0.5:0.95 on the held-out test split"
+  ],
+  "artefact_check": {
+    "onnx_test_map50": 0.4216,
+    "best_pt_test_map50": 0.4005,
+    "serving_decoder_vs_best_pt": {
+      "photographs": 100,
+      "best_pt_boxes": 233,
+      "serving_boxes": 223,
+      "recall": 0.9442,
+      "precision": 0.9865
+    },
+    "rule": "ONNX test mAP@0.5 within 0.02 of best.pt, and the serving decoder recovers >= 90% of best.pt's boxes with >= 90% of its own matched (same class, IoU >= 0.5)",
+    "passed": false,
+    "onnx_sha256": "8e0bc7e325f10330b8cd1638168bef37bc48fd7ec4b7b54b10434638d4633634",
+    "diagnostic_best_pt_cpu_batch1": {
+      "note": "best.pt scored with the same settings as the ONNX run (CPU, batch 1, test split), run by the team after the check failed; does not change the result",
+      "test_map50": 0.3996,
+      "test_map50_95": 0.1857,
+      "onnx_test_map50_95": 0.186,
+      "onnx_precision": 0.635,
+      "onnx_recall": 0.382,
+      "best_pt_precision": 0.515,
+      "best_pt_recall": 0.401
+    }
+  },
+  "deployment_check": null,
+  "deployment_check_note": "not run: python -m scripts.verify_rdd_detector --clean-roads (it runs only after the artefact check passed)",
+  "previous_model": {
+    "damage_rdd2022_india.json": {
+      "model_name": "YOLOv11n_RDD2022_Pretrained",
+      "input_size": 512,
+      "classes": [
+        "D00_Longitudinal_Crack",
+        "D10_Transverse_Crack",
+        "D20_Alligator_Crack",
+        "D40_Pothole"
+      ],
+      "raw_names": {
+        "0": "longitudinal_crack",
+        "1": "transverse_crack",
+        "2": "alligator_crack",
+        "3": "pothole"
+      },
+      "artefact_check": {
+        "passed": true
+      },
+      "deployment_check": {
+        "passed": true
+      },
+      "test": {
+        "map50": 0.584,
+        "map50_95": 0.342
+      }
+    }
+  }
+}

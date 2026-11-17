@@ -237,7 +237,7 @@ class YOLOVideoEngine:
         if self.damage_detector and self.damage_detector.is_ready:
             models.append({
                 "id": "yolo11n_rdd2022",
-                "name": "Pretrained YOLOv11n Road Damage (RDD2022)",
+                "name": ((getattr(self.damage_detector, "meta", None) or {}).get("model_name") or "Road Damage Detector (RDD2022)"),
                 "backend": self.damage_detector.backend,
                 "input_resolution": f"{self.damage_detector.input_size}x{self.damage_detector.input_size}",
                 "classes": ["Pothole", "Alligator Crack", "Longitudinal Crack", "Transverse Crack"],

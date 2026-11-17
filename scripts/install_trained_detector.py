@@ -84,8 +84,9 @@ def main(argv=None, ckpt=CKPT):
             sys.exit("artefact_check.json was made for a different ONNX file - not installing")
         for p in ("passed", "onnx_test_map50", "best_pt_test_map50", "serving_decoder_vs_best_pt"):
             _need(art, p)
-    artefact_rec = art or {"passed": False, "note": "artefact check not run; run colab/colab_verify_detector.py"}
-    deployment_rec = {"passed": False, "note": "not run yet: python -m scripts.verify_rdd_detector --clean-roads"}
+    artefact_rec = art or None   # not run: stored as null, never as a failed result
+    # Not run yet: stored as null (not as a failed result) so that no page reports a check that never ran.
+    deployment_rec = None
 
     previous = {}
     for name in (REPORT_NAME, META_NAME):
@@ -110,6 +111,7 @@ def main(argv=None, ckpt=CKPT):
         "onnx_sha256": m["onnx_sha256"], "seed": m.get("seed"),
         "not_claimed": NOT_CLAIMED,
         "artefact_check": artefact_rec, "deployment_check": deployment_rec,
+        "deployment_check_note": "not run: python -m scripts.verify_rdd_detector --clean-roads (it runs only after the artefact check passed)",
         "previous_model": previous or None,
     }
     meta = {"model_name": report["model"], "input_size": 640, "class_names": CODES, "classes": CODES,
