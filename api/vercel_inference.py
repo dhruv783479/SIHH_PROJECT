@@ -157,28 +157,6 @@ def _load_sessions():
         _SESSIONS["detector_error"] = str(e)
 
     try:
-        from models.road_damage_detector import RoadDamageDetector
-        dmg = RoadDamageDetector(checkpoints_dir=CKPT_DIR)
-        if dmg.is_ready:
-            _SESSIONS["damage_detector"] = dmg
-        else:
-            _SESSIONS["damage_detector_blocked_by"] = dmg.blocked_by
-    except Exception as e:
-        _SESSIONS["damage_detector_error"] = str(e)
-
-    try:
-        import os as _os2
-        _cwp = _os2.path.join(CKPT_DIR, "crosswalk_rdd.onnx")
-        if _os2.path.exists(_cwp):
-            from models.onnx_object_detector import ONNXObjectDetector as _OOD
-            _cw = _OOD(checkpoints_dir=CKPT_DIR, weights_path=_cwp,
-                       class_names=["Zebra Crosswalk", "Road Guide Arrow"], conf_threshold=0.25)
-            if _cw.is_ready:
-                _SESSIONS["crosswalk_detector"] = _cw
-    except Exception as e:
-        _SESSIONS["crosswalk_detector_error"] = str(e)
-
-    try:
         from models.pci_regressor_net import PavementConditionIndexEngine
         pci_eng = PavementConditionIndexEngine(model_path=os.path.join(CKPT_DIR, "pci_model.joblib"))
         _SESSIONS["pci_engine"] = pci_eng
@@ -1363,7 +1341,7 @@ def audit_image_base64(
                 "found": False,
                 "bars": [],
                 "bar_count": 0,
-                "reason": f"suppressed on distress road (distress {(CLASS_NAMES[f_cls] if 0 <= f_cls < len(CLASS_NAMES) else "Unknown")} conf {f_conf:.2f}, solidity {mean_solidity:.2f})",
+                "reason": f"suppressed on distress road (distress {(CLASS_NAMES[f_cls] if 0 <= f_cls < len(CLASS_NAMES) else 'Unknown')} conf {f_conf:.2f}, solidity {mean_solidity:.2f})",
             }
         else:
             all_cross = markings_res.get("all_crossings") or [markings_res]
@@ -1414,24 +1392,25 @@ def audit_image_base64(
     seg_out = segment_image(img_np, object_mask_full=object_mask, gray_full=gray, pothole_heat=pothole_heat)
     detections = []
 
-    # Boxes come ONLY from the trained RDD2022 detector. Segmenter components, salience scans,
-    # HSV water-pool proposals and the fixed-geometry CNN fallback box were heuristics and are gone;
-    # the segmenter mask is used only to measure area inside a detector box.
     proposals = []
-    _dmg = _SESSIONS.get("damage_detector")
-    if _dmg is not None:
-        for _d in _dmg.detect(img_np):
-            _bx, _by, _bw, _bh = _d["bbox_pixels"]
-            _cls = 2 if _d.get("damage_code") == "D40" else 1
+    if seg_out and seg_out["components"]:
+        for comp in seg_out["components"]:
             proposals.append({
-                "bbox_pixels": [_bx, _by, _bw, _bh],
-                "seg_comp": {"seg_cls": _cls, "mean_p": float(_d.get("raw_confidence", _d.get("confidence", 0.0)))},
-                "source": "rdd_yolo",
+                "bbox_pixels": comp["bbox_pixels"],
+                "seg_comp": comp,
+                "source": (seg_out or {}).get("backend", "segmenter") + "_segmenter",
             })
-    _cwd = _SESSIONS.get("crosswalk_detector")
-    crosswalk_boxes = []
-    if _cwd is not None:
-        crosswalk_boxes = [d for d in _cwd.detect(img_np) if d.get("class_name") == "Zebra Crosswalk"]
+
+    salient_boxes = _extract_salient_regions_numpy(img_np, excluded_boxes=pedestrians)
+    for sb in salient_boxes:
+        sbox = sb[:4]
+
+        if not any(_box_iou(sbox, p["bbox_pixels"]) > 0.40 for p in proposals):
+            proposals.append({
+                "bbox_pixels": sbox,
+                "seg_comp": None,
+                "source": "salient_cavity_detector",
+            })
 
     surface_analysis = {"status": "not_modelled", "code": "paved_unverified"}
     surface_code = surface_analysis.get("code")
@@ -1444,7 +1423,10 @@ def audit_image_base64(
         and p["bbox_pixels"][3] >= 45
         for p in proposals
     )
-    is_water_relevant = False  # HSV water-pool proposer removed (heuristic, caused ghost boxes)
+    is_water_relevant = (
+        frame_cls_raw.get("class_id") in (2, 3)
+        or is_unpaved
+    ) and (frame_cls_raw.get("class_id") not in (0, 4, 5, 6))
 
     if is_water_relevant and not has_substantial_pothole:
         try:
@@ -1485,6 +1467,15 @@ def audit_image_base64(
                             })
         except Exception:
             pass
+
+    if not proposals and frame_cls_raw.get("class_id") in (1, 2) and float(frame_cls_raw.get("confidence", 0.0)) >= 0.85:
+        bw_fb, bh_fb = int(W * 0.38), int(H * 0.34)
+        bx_fb, by_fb = int(W * 0.31), int(H * 0.50)
+        proposals.append({
+            "bbox_pixels": [bx_fb, by_fb, bw_fb, bh_fb],
+            "seg_comp": {"seg_cls": int(frame_cls_raw["class_id"]), "mean_p": float(frame_cls_raw["confidence"])},
+            "source": "deep_cnn_roi_proposal",
+        })
 
     mask_full = seg_out["mask"] if seg_out else None
 
@@ -2108,7 +2099,7 @@ def audit_image_base64(
     metric_3d_res = dict(_NM)
 
     if surface_analysis.get("code") == "unpaved_rural_earthen_dirt":
-        distress_dets = [d for d in detections if d.get("is_distress")]
+        distress_dets = [d for d in detections if d.get("is_distress") and not d.get("needs_manual_survey")]  # defects the plausibility guard sent to survey stay unpriced
         distress_count = len(distress_dets)
         total_distress_area = sum(float(d.get("surface_area_m2", 0.0)) for d in distress_dets)
         section_m2 = max(35.0, round(total_distress_area * 14.0, 1))
@@ -2232,7 +2223,6 @@ def audit_image_base64(
         "primary_detection": primary,
         "all_detections": all_dets,
         "surface_material": surface_analysis,
-        "crosswalk_boxes": crosswalk_boxes,
         "metric_3d_depth": metric_3d_res,
         "vimu_temporal_fusion": vimu_fusion_res,
         "pinn_hdm4_forecast": pinn_forecast,

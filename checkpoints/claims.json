@@ -1,5 +1,5 @@
 {
-  "generated_unix": 1794858965,
+  "generated_unix": 1794871993,
   "principle": "Deep learning where perception is hard; deterministic mathematics where explainability and civil compliance are non-negotiable. Every entry below states what was measured, by which script, and what is NOT claimed.",
   "subsystems": [
     {
@@ -321,7 +321,7 @@
       "measured": {
         "status": "REMOVED - previously reported figures were circular and are withdrawn"
       },
-      "evidence": "see corrections; code retained on disk only for audit",
+      "evidence": "see corrections; code kept on disk only for audit",
       "reproduce": "python -m training.train_advanced_5_suite",
       "not_claimed": "Not served. No non-circular ground truth exists for this module.",
       "served": false
@@ -335,7 +335,7 @@
       "measured": {
         "status": "REMOVED - previously reported figures were circular and are withdrawn"
       },
-      "evidence": "see corrections; code retained on disk only for audit",
+      "evidence": "see corrections; code kept on disk only for audit",
       "reproduce": "python -m training.train_advanced_5_suite",
       "not_claimed": "Not served. No non-circular ground truth exists for this module.",
       "served": false
@@ -349,7 +349,7 @@
       "measured": {
         "status": "REMOVED - previously reported figures were circular and are withdrawn"
       },
-      "evidence": "see corrections; code retained on disk only for audit",
+      "evidence": "see corrections; code kept on disk only for audit",
       "reproduce": "python -m training.train_advanced_5_suite",
       "not_claimed": "Not served. No non-circular ground truth exists for this module.",
       "served": false
@@ -363,7 +363,7 @@
       "measured": {
         "status": "REMOVED - previously reported figures were circular and are withdrawn"
       },
-      "evidence": "see corrections; code retained on disk only for audit",
+      "evidence": "see corrections; code kept on disk only for audit",
       "reproduce": "python -m training.train_advanced_5_suite",
       "not_claimed": "Not served. No non-circular ground truth exists for this module.",
       "served": false
@@ -377,7 +377,7 @@
       "measured": {
         "status": "REMOVED - previously reported figures were circular and are withdrawn"
       },
-      "evidence": "see corrections; code retained on disk only for audit",
+      "evidence": "see corrections; code kept on disk only for audit",
       "reproduce": "python -m training.train_advanced_5_suite",
       "not_claimed": "Not served. No non-circular ground truth exists for this module.",
       "served": false

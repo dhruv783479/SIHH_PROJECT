@@ -34,24 +34,31 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Check every module imports
+      - name: Serving packages import
+        # Only the packages the server loads are imported. scripts/, training/ and colab/ are programs
+        # that run when executed (colab_train_all_datasets.py clones the repo, pip-installs PyTorch and
+        # trains models at import time; the training scripts need PyTorch / Ultralytics, which are
+        # deliberately not in requirements.txt), so importing them in CI hangs or fails for reasons
+        # unrelated to the code. They are checked for syntax errors in the next step instead.
         run: |
           python -c "
           import pathlib, importlib, sys
           bad = []
-          for p in sorted(pathlib.Path('.').glob('*/[a-z]*.py')):
-              if any(x in p.parts for x in ('.venv', 'tests', 'datasets', 'web')):
-                  continue
-              mod = str(p.with_suffix('')).replace('/', '.')
-              try:
-                  importlib.import_module(mod)
-              except SystemExit:
-                  pass
-              except Exception as e:
-                  bad.append(f'{mod}: {type(e).__name__}: {e}')
-          print('\n'.join(bad) if bad else 'all modules import')
+          for pkg in ('api', 'edge', 'mlops', 'models', 'pipeline', 'services'):
+              for p in sorted(pathlib.Path(pkg).glob('[a-z]*.py')):
+                  mod = str(p.with_suffix('')).replace('/', '.')
+                  try:
+                      importlib.import_module(mod)
+                  except SystemExit:
+                      pass
+                  except Exception as e:
+                      bad.append(f'{mod}: {type(e).__name__}: {e}')
+          print('\n'.join(bad) if bad else 'all serving modules import')
           sys.exit(1 if bad else 0)
           "
+
+      - name: Every source file compiles
+        run: python -m compileall -q api edge mlops models pipeline services scripts training colab tests
 
       - name: Regression suite
         env:
