@@ -114,6 +114,14 @@ def build():
     from models.road_damage_detector import detector_blocked_by
     det_on = (bool(det) and os.path.exists(os.path.join(CKPT, "damage_rdd2022_india.onnx"))
               and detector_blocked_by(det) is None)
+    det_blocked = (detector_blocked_by(det) if det and os.path.exists(os.path.join(CKPT, "damage_rdd2022_india.onnx"))
+                   else None)
+    det_ac = (det.get("artefact_check") or {}) if det else {}
+    det_dp = (det.get("deployment_check") or {}) if det else {}
+    det_why = (("the exported ONNX file failed the artefact check" if det_ac.get("passed") is False
+                else "the artefact check is missing") if det_blocked == "artefact_check"
+               else ("the clean-road check failed" if det_dp.get("passed") is False
+                     else "the clean-road check has not been run"))
     imu_sel = rep("imu_model_selection.json")
     imu_rf = rep("imu_shock_report.json")
     imu_cnn = imu_sel.get("served") == "cnn"
@@ -189,6 +197,10 @@ def build():
         w(f"| Road-damage detector (YOLOv8, boxes) | mAP@0.5 **{f3(dtest.get('map50'))}**, mAP@0.5:0.95 "
           f"{f3(dtest.get('map50_95'))} | {num(((det.get('data') or {}).get('photographs') or {}).get('test'))} "
           "held-out RDD2022 India photographs |")
+    if det and not det_on:
+        w(f"| Road-damage detector (YOLOv8s, boxes), retrained | mAP@0.5 **{f3(dtest.get('map50'))}**, mAP@0.5:0.95 "
+          f"{f3(dtest.get('map50_95'))} | {num(((det.get('data') or {}).get('photographs') or {}).get('test'))} "
+          f"held-out photographs, duplicate-safe split. **Boxes hidden:** {det_why} |")
     w(f"| IMU shock classifier ({'1-D CNN' if imu_cnn else 'RandomForest'}) | **{pct(imu_acc)}** accuracy"
       + (f", macro-F1 {f3(imu_f1)}" if imu_f1 is not None else "") +
       " | 164 held-out windows of real Indian-road drive logs, split by time block |")
@@ -256,6 +268,9 @@ def build():
     if det_on:
         w(f"| YOLOv8 road-damage detector | COCO-pretrained, fine-tuned on RDD2022 India | yes (GPU) | mAP@0.5 "
           f"{f3(dtest.get('map50'))} | **yes** |")
+    if det and not det_on:
+        w(f"| YOLOv8s road-damage detector | {det.get('weights_init') or 'fine-tuned'} on RDD2022 India + Kaggle pothole | "
+          f"yes (GPU) | mAP@0.5 {f3(dtest.get('map50'))} | **no** — {det_why}; boxes hidden |")
     w("| YOLOv8n (COCO) | pretrained object detector | **no** — used as published | people, vehicles, signs | yes |")
     imu_h = imu_sel.get("held_out_for_reporting") or {}
     if imu_h.get("cnn"):
@@ -322,7 +337,26 @@ def build():
     if det_on:
         w("| RDD2022 India boxes (detector) | D00 / D10 / D20 / D40 | all labelled photographs | 70/15/15 split by "
           "photograph, seed 42 |")
+    if det and not det_on:
+        ph = (det.get("data") or {}).get("photographs") or {}
+        w(f"| RDD2022 India + Kaggle pothole boxes (detector) | D00 / D10 / D20 / D40 | {num(ph.get('train'))} / "
+          f"{num(ph.get('val'))} / {num(ph.get('test'))} photographs (train / val / test) | duplicate-clustered split; "
+          f"{(det.get('data') or {}).get('near_duplicates_of_test_in_train')} test photographs have a near-duplicate in train |")
     w("")
+    if det and not det_on and det_ac.get("passed") is False:
+        sv = det_ac.get("serving_decoder_vs_best_pt") or {}
+        dg = det_ac.get("diagnostic_best_pt_cpu_batch1") or {}
+        w(f"**Retrained detector: why its boxes are hidden.** The exported ONNX file scores mAP@0.5 "
+          f"{f3(det_ac.get('onnx_test_map50'))} on the test split against {f3(det_ac.get('best_pt_test_map50'))} for the "
+          f"trained network, a gap of {abs((det_ac.get('onnx_test_map50') or 0) - (det_ac.get('best_pt_test_map50') or 0)):.4f}; "
+          f"the rule, fixed before the run, allows 0.02. The serving decoder itself passed its part of the check "
+          f"({pct(sv.get('recall'))} recall and {pct(sv.get('precision'))} precision against the trained network on "
+          f"{sv.get('photographs')} photographs). "
+          + (f"Scoring the trained network under the same settings gave {f3(dg.get('test_map50'))}, so the settings do not "
+             "explain the gap. " if dg else "")
+          + "The cause has not been found and the rule was not loosened. The clean-road check is "
+          + ("recorded as failed." if det_dp.get("passed") is False else "not yet run."))
+        w("")
     w("## How the numbers are kept honest")
     w("")
     w("- **Split by source photograph**, never by file: an augmented copy can never sit on the other side of the "
@@ -451,6 +485,8 @@ def build():
     w("| `web/` | the site (`web/config.js` names the live engine it sends photographs to) |")
     w("| `deploy/` | the Hugging Face Space that hosts the public live engine |")
     w("| `docs/` | system design and the claims-vs-repository audit |")
+    if os.path.isdir(os.path.join(ROOT, "docs", "project")):
+        w("| `docs/project/` | the 10-page project report and the 10-slide deck (PDF and editable source) |")
     w(f"| `tests/` | {n_tests} tests: models, pipeline, REST API, integrity fixes, Vercel entry point |")
     w("")
     w("## Visual Evaluation Suite")
