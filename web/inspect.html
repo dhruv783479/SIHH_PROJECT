@@ -608,7 +608,7 @@ function render(d, ms) {
     ${(d.surface_material && d.surface_material.status === "not_modelled") ? `<div class="card" style="margin-top:14px">
       <div class="label">pavement material &amp; domain regime</div>
       <div class="kv"><span>Material classification</span><span><span class="badge warn">not modelled</span></span></div>
-      <p class="small muted" style="margin:8px 0 0">${esc(d.surface_material.reason || "No ground truth was available for this module.")} The surface is treated as paved and unverified; this is not a measured material reading.</p>
+      <p class="small muted" style="margin:8px 0 0">${esc((d.surface_material.reason || "No ground truth was available for this module.").replace(/\s*[.!?]?\s*$/, "."))} The surface is treated as paved and unverified; this is not a measured material reading.</p>
     </div>` : d.surface_material ? `<div class="card" style="margin-top:14px;border-color:rgba(245,158,11,.45)">
       <div class="label" style="color:#f59e0b">pavement material &amp; domain regime · surfacetypenet</div>
       <div class="kv"><span>Material classification</span><span style="font-weight:600">${esc(d.surface_material.name)}</span></div>
