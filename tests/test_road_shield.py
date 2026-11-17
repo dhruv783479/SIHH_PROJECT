@@ -592,14 +592,14 @@ class TestPhotoPipelineSevenClassesAndParity(unittest.TestCase):
                 continue
         cls.pipe = shared() if shared else DeepInferencePipeline(CKPT)
 
-    def test_photo_pipeline_dan_dag_embedder_and_5_advanced_models_ready(self):
+    def test_photo_pipeline_dan_dag_embedder_ready_and_circular_modules_not_loaded(self):
         self.assertIsNotNone(self.pipe.dan_dag_net)
         self.assertTrue(self.pipe.dan_dag_net.is_ready)
         self.assertIsNotNone(self.pipe.dan_dag_net.embedder)
+        # SurfaceTypeNet, Metric3D, V-IMU, PINN and the Forensic VLM were scored against their own
+        # labels / formulas (circular), so the pipeline no longer loads or calls them.
         for attr in ("surface_classifier", "metric_3d_engine", "vimu_fusion_engine", "pinn_forecaster", "forensic_vlm_auditor"):
-            mod = getattr(self.pipe, attr, None)
-            self.assertIsNotNone(mod, f"{attr} missing on DeepInferencePipeline")
-            self.assertTrue(getattr(mod, "is_ready", False), f"{attr}.is_ready must be True")
+            self.assertIsNone(getattr(self.pipe, attr, None), f"{attr} must not be loaded on DeepInferencePipeline")
 
     def test_photo_pipeline_local_and_vercel_parity_on_pothole_and_roadside_sign(self):
         import base64
@@ -619,9 +619,15 @@ class TestPhotoPipelineSevenClassesAndParity(unittest.TestCase):
         self.assertIn("forensic_vlm_audit", loc_res)
         self.assertIn("surface_material", ver_res)
         self.assertIn("forensic_vlm_audit", ver_res)
+        # The five circular modules report "not modelled" in BOTH engines and carry no invented numbers.
         for key in ("surface_material", "metric_3d_depth", "vimu_temporal_fusion", "pinn_hdm4_forecast", "forensic_vlm_audit"):
-            self.assertTrue((loc_res.get(key) or {}).get("trained_checkpoint_loaded"), f"Local {key} must have trained_checkpoint_loaded=True")
-            self.assertTrue((ver_res.get(key) or {}).get("trained_checkpoint_loaded"), f"Vercel {key} must have trained_checkpoint_loaded=True")
+            for who, res in (("Local", loc_res), ("Vercel", ver_res)):
+                block = res.get(key) or {}
+                self.assertEqual(block.get("status"), "not_modelled", f"{who} {key} must be reported as not_modelled")
+                self.assertFalse(block.get("trained_checkpoint_loaded"), f"{who} {key} must not claim a trained checkpoint")
+        self.assertEqual(loc_res["surface_material"].get("code"), ver_res["surface_material"].get("code"))
+        self.assertNotIn("executive_narrative", loc_res["forensic_vlm_audit"])
+        self.assertNotIn("executive_narrative", ver_res["forensic_vlm_audit"])
 
         sign_files = sorted(glob.glob(os.path.join(ENGINE_ROOT, "datasets", "12_damaged_traffic_signs", "**", "real_02_*.jpg"), recursive=True))
         if sign_files:

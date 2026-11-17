@@ -65,9 +65,9 @@ Measured on one photograph through the API: with an assumed camera mount the def
 | IMU RandomForest | classical, from scratch | yes | 86.6% | **yes** |
 
 
-### Unvalidated modules (formerly listed as the five advanced neural suites)
+### Removed modules (formerly listed as the five advanced neural suites)
 
-SurfaceTypeNet, Metric3D, V-IMU, PINN-HDM4 and the Forensic VLM still run in this build, but they are not trained-and-tested models: their training labels or targets were produced by the same heuristics or formulas they were scored against, so the accuracies once reported for them (including the 92.4% fusion agreement) were circular and are withdrawn (see `checkpoints/claims.json`, corrections). Treat their outputs as rule-based estimates. Boxes still come from heuristic proposers plus the RDD2022 detector, whose pothole recall on 40 Kaggle photos was 0 at confidence 0.25; a detector-only pipeline is on branch `detector-only-real-training` and waits for retraining on real labelled data.
+SurfaceTypeNet, Metric3D, V-IMU, PINN-HDM4 and the Forensic VLM were removed from the decision path of both engines. Their training labels or targets were produced by the same heuristics or formulas they were scored against, so the accuracies once reported for them (including the 92.4% fusion agreement) were circular and are withdrawn (see `checkpoints/claims.json`, corrections). The API keeps their keys with `status: not_modelled` and no invented numbers, and surface type is reported as `paved_unverified`. Pothole boxes still come from heuristic proposers plus the RDD2022 detector, whose pothole recall on 40 Kaggle photos was 0 at confidence 0.25; a detector-only pipeline is on branch `detector-only-real-training` and waits for retraining on real labelled data.
 
 ### Field-Inspection Grounding & Integrity Gates
 
@@ -202,7 +202,7 @@ Main API endpoints (full reference at `/api-docs`): `POST /api/v1/pipeline/deep-
 
 | Test Image | Defect / Hazard | Domain & Standard | Result & Metric | Visual Evidence Report |
 |---|---|---|---|---|
-| 01. Waterlogged Earthen Road | 4 Cavities, Severe Waterlogging | Unpaved Rural Earthen (IRC:SP:72-2015) | PCI 35.9 (POOR), Camber grading scheduled | `reports/visual_verification/01_user_upload_multipothole_earthen.png` |
+| 01. Waterlogged Earthen Road | 4 Cavities, Severe Waterlogging | earlier run only: classified Unpaved Rural Earthen by the removed SurfaceTypeNet; the pipeline now reports `paved_unverified` | earlier-run figures (PCI 35.9, camber grading) are not reproduced by the current pipeline | `reports/visual_verification/01_user_upload_multipothole_earthen.png` |
 | 02. Real Asphalt Pothole Cavity | 2 Deep Potholes (Avg 84%) | Flexible Bituminous (IRC:37 / MoRTH Cl. 500) | PCI 53.8 (POOR), Bitumen patching applicable | `reports/visual_verification/02_kaggle_pothole_cavity.png` |
 | 03. CRACK500 Fatigue Cracking | Center & Wheelpath Fatigue Cracks | Flexible Bituminous (ASTM D6433) | PCI 72.7 (SATISFACTORY), 44.9 deducts | `reports/visual_verification/03_crack500_fatigue_crack.png` |
 | 04. Missing Zebra Crossing | Missing Pedestrian Markings (87%) | Carriageway Bound (IRC:35-2015 Cl. 7.2) | Carriageway box `[148, 343, 492, 137]` | `reports/visual_verification/04_missing_zebra_crossing.png` |
