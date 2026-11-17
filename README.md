@@ -69,7 +69,7 @@ Measured on one photograph through the API: with an assumed camera mount the def
 
 ### Removed modules (formerly listed as the five advanced neural suites)
 
-SurfaceTypeNet, Metric3D, V-IMU, PINN-HDM4 and the Forensic VLM were removed from the decision path of both engines. Their training labels or targets were produced by the same heuristics or formulas they were scored against, so the accuracies once reported for them (including the 92.4% fusion agreement) were circular and are withdrawn (see `checkpoints/claims.json`, corrections). The API keeps their keys with `status: not_modelled` and no invented numbers, and surface type is reported as `paved_unverified`. Pothole boxes still come from heuristic proposers plus the RDD2022 detector, whose pothole recall on 40 Kaggle photos was 0 at confidence 0.25; a detector-only pipeline is on branch `detector-only-real-training` and waits for retraining on real labelled data.
+SurfaceTypeNet, Metric3D, V-IMU, PINN-HDM4 and the Forensic VLM were removed from the decision path of both engines. Their training labels or targets were produced by the same heuristics or formulas they were scored against, so the accuracies once reported for them (including the 92.4% fusion agreement) were circular and are withdrawn (see `checkpoints/claims.json`, corrections). The API keeps their keys with `status: not_modelled` and no invented numbers, and surface type is reported as `paved_unverified`. Pothole boxes still come from heuristic proposers plus the RDD2022 detector, whose pothole recall on 40 Kaggle photos was 0 at confidence 0.25; a detector retrained on real labelled photographs (RDD2022 India + Kaggle pothole) is installed, but its boxes are not shown: its exported file did not pass the pre-registered artefact check (see Model card).
 
 ### Field-Inspection Grounding & Integrity Gates
 
@@ -202,7 +202,7 @@ Main API endpoints (full reference at `/api-docs`): `POST /api/v1/pipeline/deep-
 | `deploy/` | the Hugging Face Space that hosts the public live engine |
 | `docs/` | system design and the claims-vs-repository audit |
 | `docs/project/` | the 10-page project report and the 10-slide deck (PDF and editable source) |
-| `tests/` | 375 tests: models, pipeline, REST API, integrity fixes, Vercel entry point |
+| `tests/` | 395 tests: models, pipeline, REST API, integrity fixes, Vercel entry point |
 
 ## Visual Evaluation Suite
 

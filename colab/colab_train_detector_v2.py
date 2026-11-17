@@ -55,7 +55,7 @@ INCLUDE_ANNOTATED_SAMPLES = False   # your 5 hand-annotated photos; needs LICENC
 EPOCHS = 100
 WEIGHTS = "yolov8s.pt"              # "yolov8m.pt" is stronger but roughly twice as slow
 IMGSZ = 640                         # 800 or 960 helps small potholes, at more time and memory
-BRANCH = "detector-only-real-training"
+BRANCH = "master"
 # ----------------------------------------------------------------------------------
 
 WORK = "/content"
@@ -178,6 +178,36 @@ shutil.copy(onnx, RESULT)
 print("\n=== detector_metrics.json ===")
 print(json.dumps(json.load(open(metrics, encoding="utf-8")), indent=2)[:6000])
 print(f"\nDONE. Files are in {RESULT}: detector_metrics.json and best.onnx")
+
+# ---- 6b. keep what later checks need (a Colab reset deletes /content) -----------------
+# best.pt, data.yaml and the held-out test photographs are needed by colab_diagnose_export_gap.py and by
+# the v3 experiment. An earlier run kept only the ONNX file, so those checks could not be run afterwards.
+# Recorded v2 split, copied from checkpoints/road_damage_detector_report.json: a retrained run is only
+# "the same split" if its counts agree. Equal counts are strong evidence, not proof photo by photo.
+RECORDED_SPLIT = {"train": 6248, "val": 781, "test": 780,
+                  "test_instances": {"longitudinal_crack": 155, "transverse_crack": 8,
+                                     "alligator_crack": 198, "pothole": 523}}
+_sp = json.load(open(metrics, encoding="utf-8")).get("split", {})
+_got = {"train": _sp.get("train", {}).get("images"), "val": _sp.get("val", {}).get("images"),
+        "test": _sp.get("test", {}).get("images"),
+        "test_instances": _sp.get("test", {}).get("instances")}
+print("\nSplit counts this run:", _got)
+print("Recorded v2 split:    ", RECORDED_SPLIT)
+print("SPLIT COUNTS MATCH THE RECORDED v2 SPLIT" if _got == RECORDED_SPLIT else
+      "WARNING: split counts DIFFER from the recorded v2 split - this is a different test set; do not compare "
+      "its numbers with the recorded 0.4005 as if they were the same measurement.")
+try:
+    from google.colab import drive
+    drive.mount("/content/drive")
+    keep = "/content/drive/MyDrive/road_shield_v2_artifacts"
+    os.makedirs(keep, exist_ok=True)
+    for src in (f"{OUT}/train/weights/best.pt", onnx, metrics, f"{OUT}/data.yaml"):
+        shutil.copy(src, keep)
+    shutil.rmtree(f"{keep}/split_test", ignore_errors=True)
+    shutil.copytree(f"{OUT}/split/test", f"{keep}/split_test")
+    print("Saved best.pt, best.onnx, detector_metrics.json, data.yaml and the test photographs to Google Drive:", keep)
+except Exception as e:
+    print("Could not save to Google Drive (", e, ") - download /content/out/train/weights/best.pt yourself now.")
 
 try:
     from google.colab import files
